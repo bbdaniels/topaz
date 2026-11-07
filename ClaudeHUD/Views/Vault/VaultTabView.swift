@@ -146,14 +146,10 @@ struct VaultTabView: View {
         .task(id: filingSignature) {
             let sessions = sessionHistory.sessions
             let history = sessions.map { (sessionId: $0.id, cwd: $0.projectPath, host: $0.host) }
-            let live = agentsService.agents.compactMap { a in
-                a.sessionId.map { (sessionId: $0, cwd: a.cwd, host: SessionHost.mac) }
-            }
-            await projectService.primeResolution(
-                forCwds: Set((agentsService.agents.map(\.cwd) + agentsService.lostTrees.map(\.cwd))
-                    .map { SessionFiling.repoCwd($0) }).filter { !$0.isEmpty })
-            await projectService.primeFiling(sessions: history + live,
-                                             cwdCounts: sessionHistory.transcriptCwdCounts)
+            await projectService.primeLive(agentsService.agents,
+                                           lostTreeCwds: agentsService.lostTrees.map(\.cwd),
+                                           history: history,
+                                           cwdCounts: sessionHistory.transcriptCwdCounts)
             var map: [String: Date] = [:]
             for s in sessions {
                 guard let folder = projectService.folder(forSession: s.id, cwd: s.projectPath) else { continue }
@@ -267,15 +263,9 @@ struct VaultTabView: View {
         return map
     }
 
-    /// Live sessions filed under no project: most often one started in
-    /// ~/Projects itself, from the phone's New session or the `>_` button.
-    /// They are listed under General at the top (Ben, 2026-11-03) until work
-    /// in a project folder or `/project` files them.
+    /// Live sessions filed under no project (`VaultProjectService.generalSessions`).
     private var generalSessions: [AgentSession] {
-        agentsService.agents.filter { a in
-            guard a.isAlive, [.working, .needsInput, .idle].contains(a.liveState) else { return false }
-            return a.cwd.isEmpty || projectService.folder(forSession: a.sessionId, cwd: a.cwd) == nil
-        }
+        projectService.generalSessions(in: agentsService.agents)
     }
 
     /// The live sessions of these project folders, most recently active
@@ -427,7 +417,7 @@ private struct GeneralRowView: View {
     }
 
     private func open(_ s: AgentSession) {
-        if !AgentsService.open(s, projectWindow: nil, terminalService: terminalService) { NSSound.beep() }
+        if !AgentsService.openListed(s, projectSessions: [], terminalService: terminalService) { NSSound.beep() }
     }
 }
 
@@ -611,11 +601,11 @@ private struct ProjectRowView: View {
     }
 
     /// Put Ben in the session, as a tab of this project's Ghostty window
-    /// (`AgentsService.open`). The window is the one another session of the
-    /// same project is attached in, when there is one.
+    /// (`AgentsService.openListed`, which the menu bar's Open Sessions also
+    /// calls).
     private func open(_ session: AgentSession) {
-        let window = ownSessionsProvider().lazy.compactMap(\.attachedGhosttyPid).first
-        if !AgentsService.open(session, projectWindow: window, terminalService: terminalService) { NSSound.beep() }
+        if !AgentsService.openListed(session, projectSessions: ownSessionsProvider(),
+                                     terminalService: terminalService) { NSSound.beep() }
     }
 
     /// `onThisMac`: the right-click menu's "New session on the MacBook"; a
@@ -727,28 +717,18 @@ private struct NewProjectSheet: View {
     }
 }
 
-/// One live session as a project row (or General) lists it. Equatable and
-/// free of ages, so a row redraws only when what it shows changes.
-struct LiveSessionLine: Identifiable, Equatable {
-    let id: String
-    let sessionId: String?
-    let name: String
-    let machine: String
-    let isIMac: Bool
-    let light: SessionLight
-    let hasWindow: Bool
-
+extension LiveSessionLine {
     /// The name is the session's title, the one History shows, so a line
     /// says what the session is doing; a placeholder such as "personal-8c"
     /// (a tmux session name) shows only until a title is written.
     init(_ a: AgentSession, now: Date) {
-        id = a.id
-        sessionId = a.sessionId
-        name = a.title ?? (a.name.isEmpty ? URL(fileURLWithPath: a.cwd).lastPathComponent : a.name)
-        hasWindow = a.hasWindow
-        isIMac = a.isIMac
-        machine = a.isIMac ? "iMac" : a.isRemoteControl ? "phone" : "MacBook"
-        light = a.light(now: now)
+        self.init(id: a.id,
+                  sessionId: a.sessionId,
+                  name: a.title ?? (a.name.isEmpty ? URL(fileURLWithPath: a.cwd).lastPathComponent : a.name),
+                  machine: a.isIMac ? "iMac" : a.isRemoteControl ? "phone" : "MacBook",
+                  isIMac: a.isIMac,
+                  light: a.light(now: now),
+                  hasWindow: a.hasWindow)
     }
 
     /// The lines of these sessions in their order, leftovers last.

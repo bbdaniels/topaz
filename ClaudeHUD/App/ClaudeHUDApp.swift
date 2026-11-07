@@ -93,7 +93,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private var ghosttyWindowsForMenu: [GhosttyWindow] = []
+    private var sessionsForMenu: [SessionMenuEntry] = []
     private var backgroundJobsForMenu: [ClassifiedWorker] = []
     private var orphansForMenu: [ClassifiedWorker] = []
 
@@ -113,44 +113,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Files the live roster first, as the Projects tab does while it is
+    /// shown, so the menu's Open Sessions and the panel file every session
+    /// alike even when another tab is showing.
     private func showContextMenu(_ sender: NSStatusBarButton) {
+        let agents = appState.agentsService
+        agents.start()
+        Task { @MainActor in
+            await appState.vaultProjectService.primeLive(
+                agents.agents, cwdCounts: appState.sessionHistoryService.transcriptCwdCounts)
+            presentContextMenu()
+        }
+    }
+
+    private func presentContextMenu() {
         let menu = NSMenu()
 
         menu.addItem(withTitle: "New Claude Session", action: #selector(newClaudeSession), keyEquivalent: "n")
             .target = self
 
-        // Open Ghostty sessions — enumerated fresh each click
-        let windows = GhosttyWindowService.openWindows()
-            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-        ghosttyWindowsForMenu = windows
-
-        if !windows.isEmpty {
-            menu.addItem(.separator())
-            let header = NSMenuItem(title: "Open Sessions", action: nil, keyEquivalent: "")
-            header.isEnabled = false
-            menu.addItem(header)
-
-            for (i, window) in windows.enumerated() {
-                let item = NSMenuItem(
-                    title: window.title,
-                    action: #selector(focusGhosttyWindow(_:)),
-                    keyEquivalent: ""
-                )
-                item.target = self
-                item.tag = i
-                menu.addItem(item)
-            }
-        } else if !GhosttyWindowService.checkAccessibility(prompt: false) {
-            menu.addItem(.separator())
-            let hint = NSMenuItem(
-                title: "Grant Accessibility to list sessions…",
-                action: #selector(promptAccessibility),
-                keyEquivalent: ""
-            )
-            hint.target = self
-            menu.addItem(hint)
-        }
-
+        addSessionSection(to: menu)
         addProcessSections(to: menu)
 
         menu.addItem(.separator())
@@ -178,9 +160,54 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appState.terminalService.launchClaudeInProjects()
     }
 
-    @objc private func focusGhosttyWindow(_ sender: NSMenuItem) {
-        guard ghosttyWindowsForMenu.indices.contains(sender.tag) else { return }
-        GhosttyWindowService.raise(ghosttyWindowsForMenu[sender.tag])
+    // MARK: - Open Sessions
+
+    /// The sessions the panel's Projects tab lists, each under its project's
+    /// name, read the way its line reads there (`SessionMenu.entries`). A
+    /// click does what a click on that line does (`AgentsService.openListed`).
+    private func addSessionSection(to menu: NSMenu) {
+        let projects = appState.vaultProjectService
+        let agents = appState.agentsService.agents
+        let now = Date()
+        sessionsForMenu = SessionMenu.entries(
+            general: LiveSessionLine.lines(projects.generalSessions(in: agents), now: now),
+            byFolder: projects.liveSessionsByFolder(in: agents).mapValues { LiveSessionLine.lines($0, now: now) })
+
+        if !sessionsForMenu.isEmpty {
+            menu.addItem(.separator())
+            menu.addItem(Self.header("Open Sessions"))
+            for (i, e) in sessionsForMenu.enumerated() {
+                let item = NSMenuItem(title: e.project, action: #selector(openListedSession(_:)), keyEquivalent: "")
+                item.attributedTitle = Self.twoLine(e.project, "\(e.name) · \(e.machine)", dim: e.dimmed)
+                item.target = self
+                item.tag = i
+                menu.addItem(item)
+            }
+        }
+        // Bringing an attached session's tab forward needs Accessibility;
+        // without it a click can only open a new tab.
+        if !GhosttyWindowService.checkAccessibility(prompt: false) {
+            if sessionsForMenu.isEmpty { menu.addItem(.separator()) }
+            let hint = NSMenuItem(
+                title: "Grant Accessibility to bring session tabs forward…",
+                action: #selector(promptAccessibility),
+                keyEquivalent: ""
+            )
+            hint.target = self
+            menu.addItem(hint)
+        }
+    }
+
+    @objc private func openListedSession(_ sender: NSMenuItem) {
+        guard sessionsForMenu.indices.contains(sender.tag) else { return }
+        let e = sessionsForMenu[sender.tag]
+        let agents = appState.agentsService.agents
+        guard let s = agents.first(where: { $0.id == e.id }) else { NSSound.beep(); return }
+        let projectSessions = e.folder.map {
+            appState.vaultProjectService.liveSessions(forFolders: [$0], in: agents)
+        } ?? []
+        if !AgentsService.openListed(s, projectSessions: projectSessions,
+                                     terminalService: appState.terminalService) { NSSound.beep() }
     }
 
     // MARK: - Background jobs and orphans

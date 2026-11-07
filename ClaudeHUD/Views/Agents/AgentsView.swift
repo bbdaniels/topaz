@@ -364,11 +364,10 @@ private struct AgentRow: View {
                             .background(Color.secondary.opacity(0.15))
                             .clipShape(Capsule())
                     }
-                    // Cross-reference to the Open Sessions menu: every
-                    // attached row carries a visible window chip so the
-                    // two views read as the same pool. Show the title
-                    // when we have one (Ghostty parent), a plain
-                    // "(attached)" label otherwise (Terminal/iTerm parent).
+                    // Every attached row carries a chip naming the window
+                    // it is attached in: the title when we have one
+                    // (Ghostty parent), a plain "(attached)" label
+                    // otherwise (Terminal/iTerm parent).
                     if agent.isRemoteControl {
                         HStack(spacing: 3) {
                             Image(systemName: "iphone")

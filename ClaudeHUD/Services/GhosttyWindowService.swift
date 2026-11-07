@@ -64,10 +64,11 @@ enum GhosttyWindowService {
         return title.isEmpty ? nil : title
     }
 
-    /// Enumerate open Ghostty windows across every Ghostty process.
-    /// Primary path: AX (lets us raise a specific window).
-    /// Fallback: parse the Ghostty launch title from `ps` when AX returns no windows,
-    /// so the menu still lists the session even though we can only activate the whole app.
+    /// Enumerate open Ghostty windows across every Ghostty process, for
+    /// `focusWindow` to find the one to raise. Primary path: AX (lets us
+    /// raise a specific window). Fallback: parse the Ghostty launch title
+    /// from `ps` when AX returns no windows, so the process can still be
+    /// activated as a whole.
     static func openWindows() -> [GhosttyWindow] {
         var result: [GhosttyWindow] = []
         let pids = ghosttyPIDs()

@@ -678,6 +678,17 @@ final class AgentsService: ObservableObject {
     /// project row. A session opened with `claude attach` only detaches when
     /// its tab closes.
     @discardableResult
+    /// A click on a listed session: its line in the Projects tab or its entry
+    /// in the menu bar's Open Sessions, the one action both call. A new tab
+    /// goes in the Ghostty window another session of its project is attached
+    /// in (`projectSessions`, its project's live sessions, most recent first;
+    /// empty under General), else a new window.
+    static func openListed(_ a: AgentSession, projectSessions: [AgentSession],
+                           terminalService: TerminalService) -> Bool {
+        open(a, projectWindow: projectSessions.lazy.compactMap(\.attachedGhosttyPid).first,
+             terminalService: terminalService)
+    }
+
     func open(id: String, terminalService: TerminalService) -> Bool {
         guard let a = agents.first(where: { $0.id == id }) else { return false }
         let window = agents.first(where: { $0.id != a.id && $0.cwd == a.cwd && $0.attachedGhosttyPid != nil })?.attachedGhosttyPid

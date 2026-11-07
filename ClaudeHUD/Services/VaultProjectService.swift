@@ -213,6 +213,23 @@ final class VaultProjectService: ObservableObject {
         for (k, v) in result.filed { sessionFolderCache[k] = v }
     }
 
+    /// Prime both caches for the live roster (and `history`, the History
+    /// sessions the Projects tab files for its recency), so
+    /// `liveSessionsByFolder` and `generalSessions` file every live session
+    /// by the full rule. The Projects tab calls it while it is shown; the
+    /// menu bar's Open Sessions calls it before it lists, so the two never
+    /// file a session differently.
+    func primeLive(_ agents: [AgentSession], lostTreeCwds: [String] = [],
+                   history: [(sessionId: String, cwd: String, host: SessionHost)] = [],
+                   cwdCounts: [String: [String: Int]]) async {
+        await primeResolution(forCwds: Set((agents.map(\.cwd) + lostTreeCwds)
+            .map { SessionFiling.repoCwd($0) }).filter { !$0.isEmpty })
+        let live = agents.compactMap { a in
+            a.sessionId.map { (sessionId: $0, cwd: a.cwd, host: SessionHost.mac) }
+        }
+        await primeFiling(sessions: history + live, cwdCounts: cwdCounts)
+    }
+
     /// The project a session is filed under. A session `primeFiling` has
     /// seen reads its filed folder; any other falls back to its start
     /// directory (worktrees collapsed), which is step 3 of the same rule.
@@ -246,6 +263,17 @@ final class VaultProjectService: ObservableObject {
             map[folder, default: []].append(a)
         }
         return map
+    }
+
+    /// Live sessions filed under no project: most often one started in
+    /// ~/Projects itself, from the phone's New session or the `>_` button.
+    /// The Projects tab lists them under General at the top (Ben,
+    /// 2026-11-03) until work in a project folder or `/project` files them.
+    func generalSessions(in agents: [AgentSession]) -> [AgentSession] {
+        agents.filter { a in
+            guard a.isAlive, [.working, .needsInput, .idle].contains(a.liveState) else { return false }
+            return a.cwd.isEmpty || folder(forSession: a.sessionId, cwd: a.cwd) == nil
+        }
     }
 
     /// The live sessions of `folders`, merged, most recently active first: one

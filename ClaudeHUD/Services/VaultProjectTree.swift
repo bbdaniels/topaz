@@ -474,6 +474,58 @@ struct LiveSessionCounts: Equatable {
     }
 }
 
+/// One live session as a project row (or General) lists it. Equatable and
+/// free of ages, so a row redraws only when what it shows changes. Built
+/// from an `AgentSession` by the initializer in `VaultTabView.swift`.
+struct LiveSessionLine: Identifiable, Equatable {
+    let id: String
+    let sessionId: String?
+    let name: String
+    let machine: String
+    let isIMac: Bool
+    let light: SessionLight
+    let hasWindow: Bool
+}
+
+// MARK: - The menu bar's Open Sessions
+
+/// One session in the menu-bar menu's Open Sessions section: a line of the
+/// panel's Projects tab under the name of the row it sits beneath.
+struct SessionMenuEntry: Equatable {
+    /// The `AgentSession.id` a click opens.
+    let id: String
+    /// The project folder the panel files it under; nil for General.
+    let folder: String?
+    /// "General" or the project's name.
+    let project: String
+    /// The panel line's two texts: the session's name, then its machine.
+    let name: String
+    let machine: String
+    /// A leftover, shown faded as in the panel.
+    let dimmed: Bool
+}
+
+/// The menu's Open Sessions are the panel's session lines, from the same
+/// model (Ben, 2026-11-07): it listed open Ghostty windows by title before,
+/// so it showed ended sessions' windows, plain shells and duplicates, and
+/// missed every iMac or phone session with no window here.
+enum SessionMenu {
+    static let generalTitle = "General"
+
+    /// General first, as at the top of the panel, then each project A to Z,
+    /// each one's lines in the panel's order (leftovers last).
+    static func entries(general: [LiveSessionLine],
+                        byFolder: [String: [LiveSessionLine]]) -> [SessionMenuEntry] {
+        func entry(_ l: LiveSessionLine, folder: String?) -> SessionMenuEntry {
+            SessionMenuEntry(id: l.id, folder: folder, project: folder ?? generalTitle,
+                             name: l.name, machine: l.machine, dimmed: l.light == .dimmed)
+        }
+        let folders = byFolder.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        return general.map { entry($0, folder: nil) }
+            + folders.flatMap { f in (byFolder[f] ?? []).map { entry($0, folder: f) } }
+    }
+}
+
 // MARK: - Tree
 
 /// The Projects tab's parent → children tree, one level deep, read off the
