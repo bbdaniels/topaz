@@ -18,7 +18,11 @@ impl crate::TermWindow {
         self.num_frames += 1;
         // If nothing on screen needs animating, then we can avoid
         // invalidating as frequently
-        *self.has_animation.borrow_mut() = None;
+        // Dance (shader.wgsl): letters re-roll every DANCE_PERIOD (500 ms), so
+        // schedule a redraw at the next re-roll even when nothing else changed.
+        let dance_ms = self.created.elapsed().as_millis() as u64;
+        *self.has_animation.borrow_mut() =
+            Some(Instant::now() + Duration::from_millis(500 - dance_ms % 500));
         // Start with the assumption that we should allow images to render
         self.allow_images = AllowImage::Yes;
 

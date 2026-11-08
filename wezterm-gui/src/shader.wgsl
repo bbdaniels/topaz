@@ -72,16 +72,51 @@ fn apply_hsv(c: vec4<f32>, transform: vec3<f32>) -> vec4<f32>
   return vec4<f32>(hsv2rgb(hsv).rgb, c.a);
 }
 
+// Dance (bbdaniels/wezterm-config, 2026-11-07): Ghostty's rando-wobble, moved
+// to the vertex stage. Text glyph corners are nudged through a smooth noise
+// field that is re-rolled every PERIOD seconds, so letters shimmer in place.
+const DANCE_AMP: f32 = 1.5;      // max displacement, in pixels
+const DANCE_SCALE: f32 = 18.0;   // size of one noise cell, in pixels (about one glyph)
+const DANCE_PERIOD: f32 = 0.5;   // seconds between re-rolls
+
+fn dance_hash(q: vec3<f32>) -> f32 {
+    var p = fract(q * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+fn dance_noise(p: vec2<f32>, t: f32) -> f32 {
+    let i = floor(p);
+    var f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    let a = dance_hash(vec3<f32>(i, t));
+    let b = dance_hash(vec3<f32>(i + vec2<f32>(1.0, 0.0), t));
+    let c = dance_hash(vec3<f32>(i + vec2<f32>(0.0, 1.0), t));
+    let d = dance_hash(vec3<f32>(i + vec2<f32>(1.0, 1.0), t));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+fn dance(pos: vec2<f32>) -> vec2<f32> {
+    let t = floor(f32(uniforms.milliseconds % 3600000u) / 1000.0 / DANCE_PERIOD);
+    let p = pos / DANCE_SCALE;
+    let d = vec2<f32>(dance_noise(p, t), dance_noise(p + 57.0, t + 113.0)) - 0.5;
+    return pos + d * 2.0 * DANCE_AMP;
+}
+
 @vertex
 fn vs_main(
     model: VertexInput,
 ) -> VertexOutput {
     var out: VertexOutput;
+    var position = model.position;
+    if model.has_color == IS_GLYPH {
+        position = dance(position);
+    }
     out.tex = model.tex;
     out.hsv = model.hsv;
     out.has_color = model.has_color;
     out.fg_color = mix(model.fg_color, model.alt_color, model.mix_value);
-    out.clip_position = uniforms.projection * vec4<f32>(model.position, 0.0, 1.0);
+    out.clip_position = uniforms.projection * vec4<f32>(position, 0.0, 1.0);
     return out;
 }
 
@@ -114,7 +149,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // the texture is the alpha channel/color mask
     // and we need to tint with the fg_color
     color = in.fg_color;
-    color.a = nearest_tex.a;
+    // Dance: a glyph moved by a fraction of a pixel must be sampled
+    // smoothly, or nearest sampling drops and doubles its pixels (grain).
+    color.a = linear_tex.a;
     hsv *= uniforms.foreground_text_hsb;
   }
 
