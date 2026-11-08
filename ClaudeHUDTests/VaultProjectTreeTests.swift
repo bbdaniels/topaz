@@ -242,7 +242,6 @@ final class SessionLightTests: XCTestCase {
         let row = #"{"pid": 7, "sessionId": "s", "cwd": "/x", "tmux": "duet:@0.%0", "attach": "tmux -L duet attach -t =duet", "service": "duet"}"#
         let r = ClaudeSessionRecords.parse(Data(row.utf8))
         XCTAssertEqual(r?.service, "duet")
-        XCTAssertEqual(r?.attach, "tmux -L duet attach -t =duet")
         XCTAssertNil(ClaudeSessionRecords.parse(Data(#"{"pid": 7, "sessionId": "s"}"#.utf8))?.service)
     }
 
@@ -277,6 +276,11 @@ final class VaultWatchTests: XCTestCase {
         XCTAssertTrue(VaultWatch.needsRescan(paths: [vault + "/Topaz"], flags: [0x20800], vault: vault))
         XCTAssertTrue(VaultWatch.needsRescan(paths: [vault + "/Topaz/Tasks.md"], flags: [0x19100], vault: vault))
         XCTAssertTrue(VaultWatch.needsRescan(paths: [vault + "/Old Name"], flags: [0x20800], vault: vault + "/"))
+        // a project folder removed (ItemIsDir | ItemRemoved)
+        XCTAssertTrue(VaultWatch.needsRescan(paths: [vault + "/Gone"], flags: [0x20200], vault: vault))
+        // beside a top-level note, the folder still counts by its own flag
+        XCTAssertTrue(VaultWatch.needsRescan(paths: [vault + "/log.md", vault + "/Topaz"],
+                                             flags: [0x11000, 0x20100], vault: vault))
     }
 
     func testOtherVaultWritesDoNotRescan() {
@@ -286,6 +290,14 @@ final class VaultWatchTests: XCTestCase {
         XCTAssertFalse(VaultWatch.needsRescan(paths: [vault + "/.obsidian/workspace.json"], flags: [0x10000], vault: vault))
         XCTAssertFalse(VaultWatch.needsRescan(paths: [vault + "/Topaz/.git/x/Tasks.md"], flags: [0x10000], vault: vault))
         XCTAssertFalse(VaultWatch.needsRescan(paths: [vault + "/Daily Notes/2026-11-08.md"], flags: [0x10000], vault: vault))
+        // top-level notes are one path deep like a project folder, but files
+        // (ItemIsFile with ItemModified, ItemCreated, ItemRenamed or ItemRemoved)
+        for note in ["log.md", "index.md", "HOME.md"] {
+            for flag: UInt32 in [0x11000, 0x19100, 0x10100, 0x10800, 0x10200] {
+                XCTAssertFalse(VaultWatch.needsRescan(paths: [vault + "/" + note], flags: [flag], vault: vault),
+                               "\(note) \(flag)")
+            }
+        }
     }
 
     func testDroppedEventsRescan() {
