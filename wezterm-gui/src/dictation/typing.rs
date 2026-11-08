@@ -5,15 +5,57 @@
 //! `rustc --edition 2021 --test typing.rs && ./typing`.
 
 /// The running text of a dictation. The service sends the whole text of the
-/// current phrase each time (TranscriptText or TranscriptInterim) and commits
-/// it with TranscriptEndpoint, after which a new phrase starts.
+/// current phrase each time (TranscriptText, or TranscriptInterim, the
+/// partial it sends with forward_interims=typed) and commits it with
+/// TranscriptEndpoint, after which a new phrase starts. Claude Code 2.1.319
+/// treats the two alike: each replaces the running phrase, and an empty one
+/// is ignored.
 #[derive(Debug, Default)]
 pub struct Transcript {
     committed: String,
     pending: String,
 }
 
+/// What a message from the service is, by its type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Heard {
+    /// TranscriptText or TranscriptInterim: the current phrase now reads its data.
+    Running,
+    /// TranscriptEndpoint: the current phrase is final.
+    Endpoint,
+    /// TranscriptError or error.
+    Error,
+    /// Anything else, which is ignored.
+    Other,
+}
+
+impl Heard {
+    pub fn of(kind: Option<&str>) -> Self {
+        match kind {
+            Some("TranscriptText" | "TranscriptInterim") => Self::Running,
+            Some("TranscriptEndpoint") => Self::Endpoint,
+            Some("TranscriptError" | "error") => Self::Error,
+            _ => Self::Other,
+        }
+    }
+}
+
 impl Transcript {
+    /// Take one message of type `kind` with `data`; what it was.
+    pub fn hear(&mut self, kind: Option<&str>, data: Option<&str>) -> Heard {
+        let heard = Heard::of(kind);
+        match heard {
+            Heard::Running => {
+                if let Some(data) = data.filter(|d| !d.is_empty()) {
+                    self.running(data);
+                }
+            }
+            Heard::Endpoint => self.endpoint(),
+            Heard::Error | Heard::Other => {}
+        }
+        heard
+    }
+
     /// The current phrase now reads `data`.
     pub fn running(&mut self, data: &str) {
         self.pending = data.to_string();
@@ -206,6 +248,140 @@ mod tests {
         assert_eq!(t.text(), "hello world again");
         t.running(" spaced");
         assert_eq!(t.text(), "hello world again spaced");
+    }
+
+    /// What a line editor does with an edit: each backspace deletes one
+    /// character, then the text is inserted.
+    fn apply(pane: &mut String, edit: &Edit) {
+        for _ in 0..edit.backspaces {
+            pane.pop();
+        }
+        pane.push_str(&edit.text);
+    }
+
+    /// Play messages through `hear`, typing each change as mod.rs does into
+    /// a pane that already holds a prompt; after every message the pane must
+    /// read the prompt and then exactly the transcript. The final text.
+    fn play(messages: &[(&str, Option<&str>)]) -> String {
+        const PROMPT: &str = "❯ ";
+        let mut transcript = Transcript::default();
+        let mut typed = String::new();
+        let mut pane = PROMPT.to_string();
+        for &(kind, data) in messages {
+            if transcript.hear(Some(kind), data) != Heard::Other {
+                let wanted = transcript.text();
+                let edit = edit_between(&typed, &wanted);
+                assert!(edit.backspaces <= typed.chars().count());
+                apply(&mut pane, &edit);
+                typed = wanted;
+            }
+            assert_eq!(pane, format!("{PROMPT}{typed}"), "after {kind} {data:?}");
+            assert_eq!(typed, transcript.text());
+        }
+        typed
+    }
+
+    #[test]
+    fn interims_are_typed_like_text() {
+        let words = ["hel", "hello", "hello wor", "hello word", "hello world"];
+        let as_kind = |kind| -> Vec<(&str, Option<&str>)> {
+            words.iter().map(|w| (kind, Some(*w))).collect()
+        };
+        assert_eq!(play(&as_kind("TranscriptInterim")), "hello world");
+        assert_eq!(
+            play(&as_kind("TranscriptInterim")),
+            play(&as_kind("TranscriptText"))
+        );
+    }
+
+    #[test]
+    fn revising_interims_then_the_final_leave_no_stray_characters() {
+        let messages = [
+            ("TranscriptInterim", Some("I")),
+            ("TranscriptInterim", Some("I scream")),
+            ("TranscriptText", Some("ice cream")),
+            ("TranscriptInterim", Some("ice cream for")),
+            ("TranscriptInterim", Some("ice cream fur")),
+            ("TranscriptInterim", Some("ice")),
+            ("TranscriptInterim", Some("")),
+            ("TranscriptInterim", None),
+            ("KeepAlive", None),
+            ("TranscriptText", Some("ice cream for everyone")),
+            // CloseStream goes here; the final text and its endpoint follow.
+            ("TranscriptInterim", Some("Ice cream for everyone, please")),
+            ("TranscriptText", Some("Ice cream for everyone.")),
+            ("TranscriptEndpoint", None),
+        ];
+        assert_eq!(play(&messages), "Ice cream for everyone.");
+    }
+
+    #[test]
+    fn interims_revise_only_the_current_phrase() {
+        let messages = [
+            ("TranscriptInterim", Some("first")),
+            ("TranscriptText", Some("First.")),
+            ("TranscriptEndpoint", None),
+            ("TranscriptInterim", Some("the café")),
+            ("TranscriptInterim", Some("the cafe is")),
+            ("TranscriptInterim", Some("The naïve")),
+            ("TranscriptText", Some("Then")),
+            ("TranscriptEndpoint", None),
+            ("TranscriptEndpoint", None),
+        ];
+        assert_eq!(play(&messages), "First. Then");
+    }
+
+    #[test]
+    fn an_interim_never_followed_by_text_is_kept() {
+        // Claude Code promotes an unreported interim to final at the end;
+        // here it stays typed, as the session's last edit types text().
+        let messages = [
+            ("TranscriptText", Some("one")),
+            ("TranscriptInterim", Some("one two")),
+        ];
+        assert_eq!(play(&messages), "one two");
+    }
+
+    #[test]
+    fn messages_are_heard_by_type() {
+        assert_eq!(Heard::of(Some("TranscriptInterim")), Heard::Running);
+        assert_eq!(Heard::of(Some("TranscriptText")), Heard::Running);
+        assert_eq!(Heard::of(Some("TranscriptEndpoint")), Heard::Endpoint);
+        assert_eq!(Heard::of(Some("TranscriptError")), Heard::Error);
+        assert_eq!(Heard::of(Some("error")), Heard::Error);
+        assert_eq!(Heard::of(Some("KeepAlive")), Heard::Other);
+        assert_eq!(Heard::of(None), Heard::Other);
+    }
+
+    #[test]
+    fn every_revision_between_texts_lands_exactly() {
+        let texts = [
+            "",
+            "a",
+            "ab",
+            "ba",
+            "abc",
+            "hello",
+            "hello word",
+            "hello world",
+            "hello world.",
+            "I scream",
+            "ice cream",
+            "café",
+            "cafe",
+            "caf",
+            "naïve",
+            "naive",
+            "❯ x",
+            " spaced",
+        ];
+        for from in texts {
+            for to in texts {
+                let mut pane = format!("$ {from}");
+                apply(&mut pane, &edit_between(from, to));
+                assert_eq!(pane, format!("$ {to}"), "{from:?} to {to:?}");
+            }
+        }
     }
 
     #[test]

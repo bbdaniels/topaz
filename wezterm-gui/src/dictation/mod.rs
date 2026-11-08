@@ -7,10 +7,12 @@
 //! The protocol is Claude Code's own (2.1.319): a WebSocket with the OAuth
 //! token of Claude Code's login; KeepAlive on open and every 8 s; binary
 //! 16-bit little-endian 16 kHz mono PCM; CloseStream at the end. The server
-//! sends the running text of the current phrase as TranscriptText (or
-//! TranscriptInterim) and commits it with TranscriptEndpoint. With the
-//! conversation engine on it sends no endpoint until after CloseStream, so
-//! the running text is typed live and any revision is deleted and retyped.
+//! sends the running text of the current phrase as TranscriptText and, with
+//! forward_interims=typed (as Claude Code and the Claude desktop app ask),
+//! as TranscriptInterim partials between them, and commits it with
+//! TranscriptEndpoint. With the conversation engine on it sends no endpoint
+//! until after CloseStream, so the running text is typed live and any
+//! revision is deleted and retyped.
 //!
 //! The token is read from the Keychain at each use and never kept or logged;
 //! on a 401 it is read once more, since Claude Code refreshes it.
@@ -34,7 +36,7 @@ use tungstenite::client::IntoClientRequest;
 use tungstenite::http::HeaderValue;
 use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Message, WebSocket};
-use typing::{edit_between, keyterms_header, newest_version, Resampler, Transcript};
+use typing::{edit_between, keyterms_header, newest_version, Heard, Resampler, Transcript};
 use wezterm_term::{KeyCode, KeyModifiers};
 
 /// The service's tuning, as Claude Code sends it. The speed probe found the
@@ -49,7 +51,8 @@ fn service_url() -> String {
         "wss://api.anthropic.com/api/ws/speech_to_text/voice_stream\
          ?encoding=linear16&sample_rate={}&channels=1\
          &endpointing_ms={ENDPOINTING_MS}&utterance_end_ms={UTTERANCE_END_MS}\
-         &language={LANGUAGE}&use_conversation_engine=true",
+         &language={LANGUAGE}&use_conversation_engine=true\
+         &forward_interims=typed",
         typing::OUTPUT_RATE
     )
 }
@@ -57,9 +60,10 @@ fn service_url() -> String {
 const KEEP_ALIVE: &str = r#"{"type":"KeepAlive"}"#;
 const CLOSE_STREAM: &str = r#"{"type":"CloseStream"}"#;
 const KEEP_ALIVE_EVERY: Duration = Duration::from_secs(8);
-/// Audio goes out in 40 ms chunks (the probe suggests small chunks save
-/// 50 to 80 ms over 100 ms ones).
-const CHUNK_SAMPLES: usize = typing::OUTPUT_RATE as usize / 25;
+/// Audio goes out in 20 ms chunks, 320 samples, as the Claude desktop app
+/// sends it (the probe suggests small chunks save 50 to 80 ms over 100 ms
+/// ones). POLL is shorter, so a chunk waits at most one poll to go.
+const CHUNK_SAMPLES: usize = typing::OUTPUT_RATE as usize / 50;
 /// How long the socket read waits before the loop sends audio again.
 const POLL: Duration = Duration::from_millis(10);
 /// After CloseStream, how long to wait for the final text.
@@ -182,8 +186,8 @@ fn run(
     // For the timing lines: audio sent, messages received, edits typed.
     let mut sent_samples = 0;
     let mut messages = 0;
-    let mut first_interim = true;
-    let mut first_text = true;
+    let mut interims = 0;
+    let mut texts = 0;
     let mut last_text_at: Option<Instant> = None;
     let end: End;
 
@@ -260,18 +264,22 @@ fn run(
                     Err(_) => continue,
                 };
                 let kind = message.get("type").and_then(|t| t.as_str());
+                let data = message.get("data").and_then(|d| d.as_str());
                 messages += 1;
-                match kind {
-                    Some(kind @ ("TranscriptText" | "TranscriptInterim")) => {
-                        let data = message.get("data").and_then(|d| d.as_str());
+                // TranscriptInterim and TranscriptText alike replace the
+                // running phrase (typing.rs), and the change is typed.
+                match transcript.hear(kind, data) {
+                    Heard::Running => {
+                        let kind = kind.unwrap_or_default();
                         let chars = data.map_or(0, |d| d.chars().count());
-                        let first = if kind == "TranscriptText" {
+                        let count = if kind == "TranscriptText" {
                             last_text_at = Some(Instant::now());
-                            std::mem::take(&mut first_text)
+                            &mut texts
                         } else {
-                            std::mem::take(&mut first_interim)
+                            &mut interims
                         };
-                        if first || final_by.is_some() {
+                        *count += 1;
+                        if *count == 1 || final_by.is_some() {
                             timing.log(format_args!(
                                 "{} {kind} received ({chars} chars; {} ms of audio sent)",
                                 if final_by.is_some() {
@@ -282,21 +290,9 @@ fn run(
                                 audio_ms(sent_samples)
                             ));
                         }
-                        if let Some(data) = data {
-                            if !data.is_empty() {
-                                transcript.running(data);
-                                type_into(
-                                    pane_id,
-                                    &cancelled,
-                                    &mut typed,
-                                    &transcript.text(),
-                                    timing,
-                                );
-                            }
-                        }
+                        type_into(pane_id, &cancelled, &mut typed, &transcript.text(), timing);
                     }
-                    Some("TranscriptEndpoint") => {
-                        transcript.endpoint();
+                    Heard::Endpoint => {
                         type_into(pane_id, &cancelled, &mut typed, &transcript.text(), timing);
                         if final_by.is_some() {
                             timing.log(format_args!(
@@ -306,12 +302,12 @@ fn run(
                             break;
                         }
                     }
-                    Some("TranscriptError") | Some("error") => {
+                    Heard::Error => {
                         type_into(pane_id, &cancelled, &mut typed, &transcript.text(), timing);
                         socket.close(None).ok();
                         return Err(anyhow!("the service reported {message}"));
                     }
-                    _ => {}
+                    Heard::Other => {}
                 }
             }
             Ok(Message::Close(_)) => {
@@ -332,7 +328,8 @@ fn run(
     type_into(pane_id, &cancelled, &mut typed, &transcript.text(), timing);
     socket.close(None).ok();
     log::info!(
-        "fn dictation timing: last TranscriptText was at +{} ms; {messages} messages, \
+        "fn dictation timing: last TranscriptText was at +{} ms; {messages} messages \
+         ({interims} TranscriptInterim, {texts} TranscriptText), \
          {} ms of audio sent, {} chars typed",
         last_text_at.map_or(0, |at| timing.ms_at(at)),
         audio_ms(sent_samples),
@@ -666,6 +663,21 @@ fn claude_version() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_url_asks_for_interims() {
+        let url = service_url();
+        assert!(url.contains("&use_conversation_engine=true&forward_interims=typed"));
+        assert!(!url.contains(char::is_whitespace));
+        assert!(url.into_client_request().is_ok());
+    }
+
+    #[test]
+    fn audio_goes_in_20_ms_chunks() {
+        assert_eq!(CHUNK_SAMPLES, 320);
+        assert_eq!(audio_ms(CHUNK_SAMPLES), 20);
+        assert!(POLL < Duration::from_millis(audio_ms(CHUNK_SAMPLES) as u64));
+    }
 
     #[test]
     fn a_refused_sign_in_is_found_under_its_context() {
