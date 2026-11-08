@@ -247,8 +247,9 @@ struct HUDContentView: View {
             // 2 points top and bottom make the header as tall as Topaz's tab
             // bar beside it (window_frame font 14, 29 points; Ben, 2026-11-08).
             .padding(.vertical, 2)
-            // The header sits in the title-bar strip (.fullSizeContentView);
-            // its empty space, the tab strip's included, moves the window.
+            // The header sits in the title-bar strip (.fullSizeContentView,
+            // hosted by StripHosting so its controls get their clicks); its
+            // empty space, the tab strip's included, moves the window.
             .background(WindowDragArea())
 
             Divider()

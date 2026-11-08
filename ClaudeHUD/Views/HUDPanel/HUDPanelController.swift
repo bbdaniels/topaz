@@ -95,9 +95,9 @@ class HUDPanelController {
         // tooltips are delivered through the hosting *controller*'s
         // participation in the responder chain; with a raw NSHostingView there
         // is no controller, so every `.help(...)` in the app silently no-ops
-        // and no tooltip ever appears.
-        panel.contentViewController = NSHostingController(
-            rootView: contentView.ignoresSafeArea(.container, edges: .top))
+        // and no tooltip ever appears. StripHosting lets the header in the
+        // title-bar strip take its clicks.
+        panel.contentViewController = StripHosting.controller(contentView)
 
         self.panel = panel
     }

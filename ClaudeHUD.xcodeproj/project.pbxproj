@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		00A6C06C1176B229537934AF /* StripHosting.swift in Sources */ = {isa = PBXBuildFile; fileRef = D979567FFA9EBCF4505E08E2 /* StripHosting.swift */; };
 		0525CFAB9F5770F3A9E10FBF /* VaultManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECF4D0E046CD2AE96517B5AC /* VaultManager.swift */; };
 		070D53ACBBF518BCE8753209 /* UsageBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDFA4853FA49C5845C653FC5 /* UsageBadge.swift */; };
 		07987A717E8EEC86178C718E /* UsageModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17F46482310A6FD0D702F970 /* UsageModels.swift */; };
@@ -20,6 +21,7 @@
 		1757F518D88364C3E5A3D218 /* SessionHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCE95C51E4C114A93E8C4749 /* SessionHostTests.swift */; };
 		1A5B1E57FB663CDDA42D3A34 /* SlackFileLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFBE827B2A3EA0BF75B317EF /* SlackFileLog.swift */; };
 		1B28739EE33F518180B447F8 /* DictationLight.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC277EB155BB61CBCF1E206 /* DictationLight.swift */; };
+		1C9D90AF89B565B85B25A3A2 /* StripHosting.swift in Sources */ = {isa = PBXBuildFile; fileRef = D979567FFA9EBCF4505E08E2 /* StripHosting.swift */; };
 		1D8DECC7A48596034B9B6CAF /* MenuBarHiding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3659F4225CE0E8541CDD4201 /* MenuBarHiding.swift */; };
 		216CE15D4C12C3FF11A0B0DA /* TranscriptHeadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29A820821CF961958265C819 /* TranscriptHeadTests.swift */; };
 		2175A7C2DE35392D478B5530 /* SessionHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = D57ABA0D74FFFA689FC8C514 /* SessionHost.swift */; };
@@ -61,6 +63,7 @@
 		6A98FA14DF4172DDDAE335D4 /* VaultProjectTreeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EDB91A617AE82542209609C /* VaultProjectTreeTests.swift */; };
 		6E76C3600929761BFCF83639 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E85FBA53BC2B877A3E34EF6 /* LibraryView.swift */; };
 		716AF768A9028A0E83E447BD /* SSEMCPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B9601851634E06856B4D47D /* SSEMCPClient.swift */; };
+		7408C8D2C08139A33EE627FE /* StripHostingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F23CEF128298D202B3C846D8 /* StripHostingTests.swift */; };
 		749DC764D831EF175567E9FC /* VaultTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B280310DE38541F7B2CD6849 /* VaultTabView.swift */; };
 		763D915CF0FBE368DEE6A12F /* HotkeyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D906C2A42EF5CC6963D24D58 /* HotkeyService.swift */; };
 		795F5B6F8EB4DA1352BCEC3A /* RemoteControlReload.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6620B0A1720DA0352F1893D /* RemoteControlReload.swift */; };
@@ -183,6 +186,7 @@
 		D57ABA0D74FFFA689FC8C514 /* SessionHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionHost.swift; sourceTree = "<group>"; };
 		D7EE451409BCA1277D6282FF /* IMacLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMacLauncher.swift; sourceTree = "<group>"; };
 		D906C2A42EF5CC6963D24D58 /* HotkeyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyService.swift; sourceTree = "<group>"; };
+		D979567FFA9EBCF4505E08E2 /* StripHosting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StripHosting.swift; sourceTree = "<group>"; };
 		DB043CB409497C537E66D2B6 /* LibraryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryService.swift; sourceTree = "<group>"; };
 		DEC277EB155BB61CBCF1E206 /* DictationLight.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationLight.swift; sourceTree = "<group>"; };
 		E196A0AEBD4F89C4DBAFB5D7 /* ProjectResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectResolverTests.swift; sourceTree = "<group>"; };
@@ -194,6 +198,7 @@
 		ECF32EB6AD8CA6F1CBD98A8A /* PanelToggle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelToggle.swift; sourceTree = "<group>"; };
 		ECF4D0E046CD2AE96517B5AC /* VaultManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultManager.swift; sourceTree = "<group>"; };
 		EF071C0FD812AE7E6F9A7928 /* LibraryRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryRow.swift; sourceTree = "<group>"; };
+		F23CEF128298D202B3C846D8 /* StripHostingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StripHostingTests.swift; sourceTree = "<group>"; };
 		F5CF31D45958F7B287926676 /* FloatingNoteWindowManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingNoteWindowManager.swift; sourceTree = "<group>"; };
 		FA085D40E8A53F2FFC35D133 /* SessionMenuTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionMenuTests.swift; sourceTree = "<group>"; };
 		FAA7DC5B4103396ACB2B5F3F /* UsageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageService.swift; sourceTree = "<group>"; };
@@ -363,6 +368,7 @@
 		C2B0EEA4C66521EED2A06C05 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				D979567FFA9EBCF4505E08E2 /* StripHosting.swift */,
 				9CAC8DAC3F016020147131CD /* Agents */,
 				6AA81EE2EE9C0A51482701D9 /* HUDPanel */,
 				83B7E7EAA19BBD98DB3E4D7C /* Library */,
@@ -430,6 +436,7 @@
 				FCE95C51E4C114A93E8C4749 /* SessionHostTests.swift */,
 				FA085D40E8A53F2FFC35D133 /* SessionMenuTests.swift */,
 				E992A83FCF56D1E426D04F7A /* SessionScanTests.swift */,
+				F23CEF128298D202B3C846D8 /* StripHostingTests.swift */,
 				29A820821CF961958265C819 /* TranscriptHeadTests.swift */,
 				6AA4D330DBDA52E4F3C827CF /* VaultAccessTests.swift */,
 				9EDB91A617AE82542209609C /* VaultProjectTreeTests.swift */,
@@ -569,6 +576,8 @@
 				5ACB12D73E8B745370726F25 /* SessionMenuTests.swift in Sources */,
 				294735844DA967EC8381EBED /* SessionScan.swift in Sources */,
 				5570E5BE43267ED8BE716CDA /* SessionScanTests.swift in Sources */,
+				00A6C06C1176B229537934AF /* StripHosting.swift in Sources */,
+				7408C8D2C08139A33EE627FE /* StripHostingTests.swift in Sources */,
 				87955102C6B35861A4BF4F93 /* TranscriptHead.swift in Sources */,
 				216CE15D4C12C3FF11A0B0DA /* TranscriptHeadTests.swift in Sources */,
 				3C401FF76D8B4AA39219FBA4 /* VaultAccess.swift in Sources */,
@@ -631,6 +640,7 @@
 				E7EFBDDB60EC4968B77D04B5 /* SkillsService.swift in Sources */,
 				1A5B1E57FB663CDDA42D3A34 /* SlackFileLog.swift in Sources */,
 				AF44EBFA0AB87F2490D412F9 /* StdioMCPClient.swift in Sources */,
+				1C9D90AF89B565B85B25A3A2 /* StripHosting.swift in Sources */,
 				2DC1704ACE2F286704A1DF5C /* TerminalService.swift in Sources */,
 				9C3637274F96736D202895D8 /* TodayView.swift in Sources */,
 				0A4D8DD96DCA844462BAAE4B /* Tooltip.swift in Sources */,

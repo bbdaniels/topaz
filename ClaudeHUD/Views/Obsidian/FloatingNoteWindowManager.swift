@@ -25,7 +25,7 @@ class FloatingNoteWindowManager: ObservableObject {
             self?.closeWindow(id: id)
         }
 
-        let hostingView = NSHostingView(rootView: contentView.ignoresSafeArea(.container, edges: .top))
+        let hostingView = StripHosting.view(contentView)
 
         let window = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 500, height: 600),
