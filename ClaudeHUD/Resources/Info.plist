@@ -5,9 +5,9 @@
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleName</key>
-	<string>ClaudeHUD</string>
+	<string>Topaz</string>
 	<key>CFBundleDisplayName</key>
-	<string>ClaudeHUD</string>
+	<string>Topaz</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
