@@ -69,13 +69,14 @@ enum SessionScan {
     /// which is where the session last ran; on a tie, the Mac's, which is
     /// local and can be deleted.
     static func scan(roots: [(host: SessionHost, dir: String)], headCache: [String: CachedHead],
-                     sidecarTitles: [String: String], home: String = NSHomeDirectory()) -> Result {
+                     sidecarTitles: [String: String], live: Set<String> = [],
+                     home: String = NSHomeDirectory()) -> Result {
         var changedHeads: [String: CachedHead] = [:]
         var seenPaths = Set<String>()
         var found: [SessionInfo] = []
         for root in roots {
             found += scanDir(root.dir, host: root.host, headCache: headCache, sidecarTitles: sidecarTitles,
-                             home: home, changedHeads: &changedHeads, seenPaths: &seenPaths)
+                             live: live, home: home, changedHeads: &changedHeads, seenPaths: &seenPaths)
         }
         let removed = headCache.keys.filter { !seenPaths.contains($0) }
         return Result(sessions: merge(found), changedHeads: changedHeads, removedPaths: removed)
@@ -98,7 +99,7 @@ enum SessionScan {
 
     /// The sessions of one host's transcript directory.
     static func scanDir(_ baseDir: String, host: SessionHost, headCache: [String: CachedHead],
-                        sidecarTitles: [String: String], home: String,
+                        sidecarTitles: [String: String], live: Set<String> = [], home: String,
                         changedHeads: inout [String: CachedHead], seenPaths: inout Set<String>) -> [SessionInfo] {
         let fm = FileManager.default
         guard let projectDirs = try? fm.contentsOfDirectory(atPath: baseDir) else { return [] }
@@ -150,8 +151,16 @@ enum SessionScan {
                 }
                 let (projectPath, projectName) = decodedDir!
 
+                // A session opened and never used is listed while it runs,
+                // under `SessionTitleSchedule.unusedTitle`, so the titler
+                // names its live line; once it ends it drops out, as an
+                // abandoned shell always has (2026-11-08, "projects-e0").
+                let unusedTitle = SessionTitleSchedule.unusedTitle
+                let sidecar = sidecarTitles[sessionId].flatMap {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines) == unusedTitle && !live.contains(sessionId) ? nil : $0
+                }
                 let preview: String
-                if let title = sidecarTitles[sessionId] {
+                if let title = sidecar {
                     // A titled session: the sidecar title wins. Strip a
                     // leading "<project>: ", since every row already carries a
                     // project tag and old sidecars carry the prefix forever
@@ -163,6 +172,8 @@ enum SessionScan {
                     preview = stripProjectPrefix(title, projectName: projectName)
                 } else if let label = verdict.label {
                     preview = label
+                } else if live.contains(sessionId) {
+                    preview = unusedTitle
                 } else {
                     // No real user turn found in the head and no title sidecar:
                     // abandoned shells and unparseable heads.
@@ -651,6 +662,18 @@ enum SessionTitlePrompt {
 /// ran. `titledAt` is the sidecar's modification time, nil when there is none.
 enum SessionTitleSchedule {
     static let refreshEvery: TimeInterval = 60
+
+    /// The title of a session opened and never used (no prompt, no
+    /// `/project`, no reply), written at once and without a model call
+    /// (2026-11-08: "projects-e0", an iMac session opened at 22:02 and never
+    /// typed into, kept its placeholder all night, because nothing was due).
+    /// A session holding it counts as untitled, so its first activity is
+    /// named at once.
+    static let unusedTitle = "Opened, nothing asked yet"
+
+    static func unusedDue(titledAt: Date?, hasContent: Bool) -> Bool {
+        titledAt == nil && !hasContent
+    }
 
     static func due(titledAt: Date?, hasContent: Bool, transcriptModified: Date, now: Date) -> Bool {
         guard hasContent else { return false }

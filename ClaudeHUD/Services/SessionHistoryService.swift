@@ -114,9 +114,10 @@ class SessionHistoryService: ObservableObject {
         let started = Date()
         let index = transcriptIndex
         let headCache = await index.loadHeads()
+        let live = liveSessionIds()
         let scan = await Task.detached(priority: .userInitiated) {
             SessionScan.scan(roots: SessionHost.allCases.map { (host: $0, dir: $0.projectsDir()) },
-                             headCache: headCache, sidecarTitles: SessionScan.loadSidecarTitles())
+                             headCache: headCache, sidecarTitles: SessionScan.loadSidecarTitles(), live: live)
         }.value
         let ms = Int(Date().timeIntervalSince(started) * 1000)
         let iMacCount = scan.sessions.filter { $0.host == .iMac }.count
@@ -140,6 +141,11 @@ class SessionHistoryService: ObservableObject {
     /// its sessions by the one rule (`VaultProjectService.primeFiling`), so a
     /// title names the session's own project whether or not any view is open.
     weak var vaultProjects: VaultProjectService?
+
+    /// The ids of the sessions running now, set by `AppState` from
+    /// `AgentsService`: the scan lists a running session that was never used,
+    /// so it gets a title (`SessionTitleSchedule.unusedTitle`).
+    var liveSessionIds: () -> Set<String> = { [] }
 
     private func updateTitles() {
         guard titleTask == nil else { return }
@@ -303,11 +309,22 @@ actor SessionTitler {
         where SessionTitleSchedule.retryDue(failedAt: failedAt[c.id], now: now) {
             if calls >= Self.perPass || Task.isCancelled { break }
             let sidecar = "\(Self.titlesDir)/\(c.id).txt"
-            let titledAt = (try? FileManager.default.attributesOfItem(atPath: sidecar))?[.modificationDate] as? Date
+            let writtenAt = (try? FileManager.default.attributesOfItem(atPath: sidecar))?[.modificationDate] as? Date
             // Cheap first: a transcript untouched since its title has no new prompt.
-            if let titledAt, c.modified <= titledAt || now.timeIntervalSince(titledAt) < SessionTitleSchedule.refreshEvery { continue }
+            if let writtenAt, c.modified <= writtenAt { continue }
+            let unused = writtenAt != nil && (try? String(contentsOfFile: sidecar, encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) == SessionTitleSchedule.unusedTitle
+            let titledAt = unused ? nil : writtenAt
+            if let titledAt, now.timeIntervalSince(titledAt) < SessionTitleSchedule.refreshEvery { continue }
 
             var context = SessionScan.titleContext(in: c.path)
+            if SessionTitleSchedule.unusedDue(titledAt: titledAt, hasContent: context.hasContent) {
+                if !unused {
+                    Self.writeSidecar(id: c.id, title: SessionTitleSchedule.unusedTitle)
+                    await onTitle(c.id, SessionTitleSchedule.unusedTitle)
+                }
+                continue
+            }
             guard SessionTitleSchedule.due(titledAt: titledAt, hasContent: context.hasContent,
                            transcriptModified: c.modified, now: now) else { continue }
             context.project = c.project

@@ -28,6 +28,28 @@ final class SessionScanTests: XCTestCase {
                          headCache: [:], sidecarTitles: [:], home: home)
     }
 
+    /// A session opened and never typed into (2026-11-08, "projects-e0") is
+    /// listed under the unused title while it runs, so its live line gets a
+    /// name, and drops out once it ends, even after that title was written.
+    func testARunningSessionNeverUsedIsListedUnderTheUnusedTitleUntilItEnds() throws {
+        let home = try tempHome()
+        let dir = SessionHost.iMac.projectsDir(home: home) + "/-home-bbdaniels-Projects"
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let records = [#"{"type":"mode","mode":"normal","sessionId":"u1"}"#,
+                       #"{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"u1"}"#]
+        try Data((records.joined(separator: "\n") + "\n").utf8).write(to: URL(fileURLWithPath: dir + "/u1.jsonl"))
+        let roots = SessionHost.allCases.map { (host: $0, dir: $0.projectsDir(home: home)) }
+        let unused = SessionTitleSchedule.unusedTitle
+
+        let running = SessionScan.scan(roots: roots, headCache: [:], sidecarTitles: [:], live: ["u1"], home: home)
+        XCTAssertEqual(running.sessions.map(\.preview), [unused])
+        let named = SessionScan.scan(roots: roots, headCache: [:], sidecarTitles: ["u1": unused], live: ["u1"], home: home)
+        XCTAssertEqual(named.sessions.map(\.preview), [unused])
+        XCTAssertTrue(SessionScan.scan(roots: roots, headCache: [:], sidecarTitles: [:], home: home).sessions.isEmpty)
+        XCTAssertTrue(SessionScan.scan(roots: roots, headCache: [:], sidecarTitles: ["u1": unused], home: home).sessions.isEmpty,
+                      "an ended shell drops out of History although its title was written")
+    }
+
     func testAnIMacTranscriptIsListedAsTheIMacsUnderTheMacsCheckout() throws {
         let home = try tempHome()
         try FileManager.default.createDirectory(atPath: home + "/Projects/heat-tv", withIntermediateDirectories: true)
@@ -230,6 +252,16 @@ final class SessionScanTests: XCTestCase {
         // Titled thirty seconds ago: not yet, whatever happened.
         let recent = now.addingTimeInterval(-30)
         XCTAssertFalse(due(recent, true, now, now))
+    }
+
+    /// A session opened and never used is named at once, without a call;
+    /// one already named is not, and one with anything in it gets a real title.
+    func testAnUnusedSessionIsNamedAtOnceWithoutACall() {
+        let unused = SessionTitleSchedule.unusedDue
+        XCTAssertTrue(unused(nil, false))
+        XCTAssertFalse(unused(nil, true))
+        XCTAssertFalse(unused(Date(), false))
+        XCTAssertFalse(SessionTitleSchedule.unusedTitle.isEmpty)
     }
 
     /// A session opened with `/project` has something to name before its

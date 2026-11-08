@@ -52,6 +52,9 @@ class AppState: ObservableObject {
         vaultIngestService.start(vaultPath: vaultURL)
         vaultProjectService.start(vaultPath: vaultURL)
         sessionHistoryService.vaultProjects = vaultProjectService
+        sessionHistoryService.liveSessionIds = { [weak agentsService] in
+            Set(agentsService?.agents.filter(\.isAlive).compactMap(\.sessionId) ?? [])
+        }
 
         // Remote Control server: observe the launchd agent, and keep its
         // permission mode in step with the header picker. Never starts a
