@@ -619,13 +619,57 @@ fn set_read_timeout(socket: &Socket, timeout: Duration) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// How long a Keychain read may take before the session stops waiting on it.
+const KEYCHAIN_WAIT: Duration = Duration::from_secs(2);
+/// True while a `security` read is still running. A read that outlives
+/// KEYCHAIN_WAIT (a keychain dialog waiting on Ben, say) is never killed, since
+/// killing a security process mid-dialog left the login keychain locked
+/// (2026-11-08); it is left to finish, and until it does each new read fails
+/// at once instead of starting another, so fn holds cannot pile them up.
+static KEYCHAIN_READ_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Runs `work` on a thread of its own and waits up to `wait` for it, one at a
+/// time per `running` flag: None when an earlier one is still running or this
+/// one did not finish in time (it then runs on, and clears the flag when done).
+fn single_flight<T: Send + 'static>(
+    running: &'static AtomicBool,
+    wait: Duration,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    if running.swap(true, Ordering::SeqCst) {
+        return None;
+    }
+    let (tx, rx) = channel();
+    let spawned = std::thread::Builder::new()
+        .name("fn-dictation-keychain".to_string())
+        .spawn(move || {
+            let result = work();
+            running.store(false, Ordering::SeqCst);
+            tx.send(result).ok();
+        });
+    if spawned.is_err() {
+        running.store(false, Ordering::SeqCst);
+        return None;
+    }
+    rx.recv_timeout(wait).ok()
+}
+
 /// Claude Code's OAuth access token, from its Keychain item, read through
 /// /usr/bin/security (which the item's access list trusts, so no prompt).
 fn access_token() -> anyhow::Result<String> {
-    let output = std::process::Command::new("/usr/bin/security")
-        .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"])
-        .output()
-        .context("running /usr/bin/security")?;
+    let output = single_flight(&KEYCHAIN_READ_RUNNING, KEYCHAIN_WAIT, || {
+        std::process::Command::new("/usr/bin/security")
+            .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"])
+            .stdin(std::process::Stdio::null())
+            .output()
+    })
+    .ok_or_else(|| {
+        anyhow!(
+            "the Keychain read has not answered within {KEYCHAIN_WAIT:?}, or an earlier \
+             one is still waiting (a keychain dialog?); it is left running"
+        )
+    })?
+    .context("running /usr/bin/security")?;
     if !output.status.success() {
         log::error!("fn dictation: no Keychain item {KEYCHAIN_SERVICE:?}");
         return Err(anyhow!(NOT_SIGNED_IN));
@@ -691,5 +735,30 @@ mod tests {
 
         let err = anyhow!("a timeout").context("connecting");
         assert!(sign_in_refused(&err).is_none());
+    }
+    #[test]
+    fn a_keychain_read_is_bounded_and_single_flight() {
+        static RUNNING: AtomicBool = AtomicBool::new(false);
+        let quick = single_flight(&RUNNING, Duration::from_millis(500), || 7);
+        assert_eq!(quick, Some(7));
+        assert!(!RUNNING.load(Ordering::SeqCst));
+
+        let (release_tx, release_rx) = channel::<()>();
+        let slow = single_flight(&RUNNING, Duration::from_millis(50), move || {
+            release_rx.recv().ok();
+            8
+        });
+        assert_eq!(slow, None, "stops waiting after its time");
+        assert!(RUNNING.load(Ordering::SeqCst), "the slow one is left running");
+        let started = Instant::now();
+        assert_eq!(single_flight(&RUNNING, Duration::from_secs(5), || 9), None);
+        assert!(started.elapsed() < Duration::from_secs(1), "a second read fails at once");
+
+        release_tx.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while RUNNING.load(Ordering::SeqCst) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(single_flight(&RUNNING, Duration::from_millis(500), || 10), Some(10));
     }
 }
