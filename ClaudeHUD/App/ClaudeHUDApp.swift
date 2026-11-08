@@ -36,18 +36,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState()
     private var panelController: HUDPanelController?
     private var statusItem: NSStatusItem?
-    private let ghosttyStack = GhosttyStackManager()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // A regular app, with a Dock icon and a Cmd-Tab entry (Ben, 2026-11-06).
         // As a menu bar (.accessory) app it was never in the order macOS follows
-        // when the front app quits, so closing a session's Ghostty window brought
+        // when the front app quits, so closing a session's terminal window brought
         // Arc forward over the panel and it looked as if it had hidden itself.
         NSApp.setActivationPolicy(.regular)
 
         panelController = HUDPanelController(appState: appState)
         setupStatusItem()
-        ghosttyStack.start()
         appState.processMonitor.onUpdate = { [weak self] report in
             self?.updateOrphanBadge(report.orphans.count)
         }
@@ -164,7 +162,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The sessions the panel's Projects tab lists, each under its project's
     /// name, read the way its line reads there (`SessionMenu.entries`). A
-    /// click does what a click on that line does (`AgentsService.openListed`).
+    /// click does what a click on that line does (`AgentsService.open`).
     private func addSessionSection(to menu: NSMenu) {
         let projects = appState.vaultProjectService
         let agents = appState.agentsService.agents
@@ -184,18 +182,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 menu.addItem(item)
             }
         }
-        // Bringing an attached session's tab forward needs Accessibility;
-        // without it a click can only open a new tab.
-        if !GhosttyWindowService.checkAccessibility(prompt: false) {
-            if sessionsForMenu.isEmpty { menu.addItem(.separator()) }
-            let hint = NSMenuItem(
-                title: "Grant Accessibility to bring session tabs forward…",
-                action: #selector(promptAccessibility),
-                keyEquivalent: ""
-            )
-            hint.target = self
-            menu.addItem(hint)
-        }
     }
 
     @objc private func openListedSession(_ sender: NSMenuItem) {
@@ -203,11 +189,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let e = sessionsForMenu[sender.tag]
         let agents = appState.agentsService.agents
         guard let s = agents.first(where: { $0.id == e.id }) else { NSSound.beep(); return }
-        let projectSessions = e.folder.map {
-            appState.vaultProjectService.liveSessions(forFolders: [$0], in: agents)
-        } ?? []
-        if !AgentsService.openListed(s, projectSessions: projectSessions,
-                                     terminalService: appState.terminalService) { NSSound.beep() }
+        if !AgentsService.open(s) { NSSound.beep() }
     }
 
     // MARK: - Background jobs and orphans
@@ -286,7 +268,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func attachBackgroundJob(_ sender: NSMenuItem) {
         guard backgroundJobsForMenu.indices.contains(sender.tag),
               let short = backgroundJobsForMenu[sender.tag].short else { return }
-        if !appState.agentsService.open(id: short, terminalService: appState.terminalService) { NSSound.beep() }
+        if !appState.agentsService.open(id: short) { NSSound.beep() }
     }
 
     /// Never automatic: every close is this click plus a confirmation.
@@ -310,10 +292,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         Task { await appState.processMonitor.close(w) }
-    }
-
-    @objc private func promptAccessibility() {
-        GhosttyWindowService.checkAccessibility(prompt: true)
     }
 
     @objc private func toggleScreenCover() {

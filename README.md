@@ -39,11 +39,9 @@ The CLI handles auth, tool execution, and MCP connections. ClaudeHUD provides th
 - Briefings preloaded and cached to disk (instant on revisit)
 - Click email threads to expand full body content
 
-**Projects tab** -- One row per Obsidian vault project (a top-level folder with a `Tasks.md`), grouped by recent activity. Each row shows badges for its live Claude Code sessions (click to focus their windows) and a launch button that opens a new session with the project's vault context. A project whose `Tasks.md` frontmatter declares `parent: <folder>` is shown inset under that project, and the parent row sums its children's badges. Sessions are attributed to projects by the `cwds:` frontmatter, longest match wins.
+**Projects tab** -- One row per Obsidian vault project (a top-level folder with a `Tasks.md`), grouped by recent activity. Each row shows badges for its live Claude Code sessions (click to focus their WezTerm tabs) and a launch button that opens a new session with the project's vault context. A project whose `Tasks.md` frontmatter declares `parent: <folder>` is shown inset under that project, and the parent row sums its children's badges. Sessions are attributed to projects by the `cwds:` frontmatter, longest match wins.
 
-**Terminal integration** -- Launch your preferred terminal directly from the header. Long-press the terminal button to switch. Supported terminals:
-- **Auto-execute:** Ghostty, iTerm2, Terminal.app
-- **Copy to clipboard:** Warp, Alacritty, kitty, Hyper, VS Code
+**Terminal integration** -- Sessions open as tabs in one WezTerm window (`/Applications/WezTerm.app`). Clicking a session focuses the tab it is already in, or opens one: an iMac session's tab is titled with its tmux session name (`rc-<name>`), a Mac session's `<project> (Mac)`. ClaudeHUD drives WezTerm through `wezterm cli` and brings it forward through NSWorkspace, so it needs no Apple Events permission. Closing a tab only detaches; the session runs on until it is stopped from ClaudeHUD.
 
 **Obsidian notes** -- Browse and preview your Obsidian vault directly in the app. Click the archive box icon in the tab bar to access:
 - Multi-vault support with persistent vault selection

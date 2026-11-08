@@ -225,15 +225,24 @@ final class ScreenCoverService: ObservableObject {
         }
     }
 
+    /// Whether ClaudeHUD holds Accessibility, which the cover's input tap
+    /// needs; `prompt` asks macOS to show its grant dialog.
+    @discardableResult
+    static func checkAccessibility(prompt: Bool = false) -> Bool {
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        let options = [key: prompt] as CFDictionary
+        return AXIsProcessTrustedWithOptions(options)
+    }
+
     func cover() {
         guard !isCovered else { return }
 
         // Without Accessibility the tap would be dead, so the cover shows
         // degraded (visible, input passes through) rather than presenting a
         // black screen that silently eats nothing.
-        let trusted = GhosttyWindowService.checkAccessibility(prompt: false)
+        let trusted = Self.checkAccessibility(prompt: false)
         if !trusted {
-            GhosttyWindowService.checkAccessibility(prompt: true)
+            Self.checkAccessibility(prompt: true)
             logger.warning("Accessibility not granted — covering without input blocking")
         }
 

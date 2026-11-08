@@ -11,7 +11,6 @@ import AppKit
 /// other categories render as a flat or single-group LibraryRow list.
 struct LibraryView: View {
     @EnvironmentObject var library: LibraryService
-    @EnvironmentObject var terminalService: TerminalService
     @Environment(\.fontScale) private var scale
     @State private var searchText: String = ""
     @State private var expandedGroups: Set<String> = []
@@ -498,6 +497,6 @@ struct LibraryView: View {
     private func runTagPass(force: Bool) {
         let folder = SkillsService.skillsRoot.path
         let prompt = SkillsService.tagPrompt(force: force)
-        launchClaudeSession(prompt: prompt, name: "skills-tags", cwd: folder, terminalService: terminalService)
+        launchClaudeSession(prompt: prompt, name: "skills-tags", cwd: folder)
     }
 }

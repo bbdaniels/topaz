@@ -150,7 +150,7 @@ enum LibraryCategory: String, CaseIterable, Identifiable {
 
     /// Prompt sent to a freshly launched Claude session when the user clicks
     /// "Open with Claude" on an item in this category. Keep terse — they get
-    /// piped through shell quoting and a Ghostty temp script.
+    /// piped through shell quoting and the iMac launcher's `--prompt`.
     func openPrompt(for item: LibraryItem) -> String {
         let name = item.displayName
         switch self {

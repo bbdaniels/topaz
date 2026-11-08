@@ -115,9 +115,8 @@ struct LibraryRow: View {
         } else {
             dir = item.path.deletingLastPathComponent().path
         }
-        let auto = launchClaudeSession(prompt: prompt, name: item.displayName, cwd: dir,
-                                       terminalService: terminalService)
-        feedback = auto ? "Opened!" : "Cmd+V"
+        let opened = launchClaudeSession(prompt: prompt, name: item.displayName, cwd: dir)
+        feedback = opened ? "Opened!" : "Not opened"
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { feedback = nil }
     }
 }

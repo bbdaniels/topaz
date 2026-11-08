@@ -192,7 +192,6 @@ struct HUDContentView: View {
     @EnvironmentObject var terminalService: TerminalService
     @EnvironmentObject var sessionHistory: SessionHistoryService
     @EnvironmentObject var vaultManager: VaultManager
-    @State private var showTerminalPopover = false
     @State private var showInfoPopover = false
     @State private var activeFixedTab: FixedTab = .vault
     @State private var fontScale: CGFloat = 1.0
@@ -223,13 +222,6 @@ struct HUDContentView: View {
                 .contextMenu {
                     Button("New session on the iMac") { terminalService.launchClaudeInProjects() }
                     Button("New session on the MacBook") { terminalService.launchClaudeInProjects(onThisMac: true) }
-                }
-                .simultaneousGesture(LongPressGesture(minimumDuration: 0.4).onEnded { _ in
-                    showTerminalPopover = true
-                })
-                .popover(isPresented: $showTerminalPopover) {
-                    TerminalPopover()
-                        .environmentObject(terminalService)
                 }
 
                 Button(action: { showInfoPopover.toggle() }) {
@@ -453,7 +445,6 @@ struct SessionHistoryView: View {
     @State private var searchText = ""
     @State private var resolvePrimed = false
     @State private var searchDebounceTask: Task<Void, Never>?
-    @State private var useColors = UserDefaults.standard.bool(forKey: "history.useColors")
 
     /// Every session as a row, filtered by search, newest first. The project
     /// is attribution only: the vault project the session is filed under by
@@ -555,16 +546,6 @@ struct SessionHistoryView: View {
                         .buttonStyle(.borderless)
                         .hudTip("Clear search")
                     }
-                    Button(action: {
-                        useColors.toggle()
-                        UserDefaults.standard.set(useColors, forKey: "history.useColors")
-                    }) {
-                        Image(systemName: useColors ? "paintpalette.fill" : "paintpalette")
-                            .font(.system(size: 11 * scale))
-                            .foregroundColor(useColors ? .accentColor : .secondary)
-                    }
-                    .buttonStyle(.borderless)
-                    .hudTip(useColors ? "Project colors ON" : "Project colors OFF")
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 6)
@@ -915,16 +896,10 @@ func daemonizedClaudeCommand(_ argSuffix: String, remoteControlName: String? = n
         + "| grep -oE '[0-9a-f]{8}' | tail -1); "
         + "if [ -n \"$__i\" ]; then "
         + "echo \"[registered with daemon: $__i -- run 'claude agents' to supervise]\"; "
-        // Closing the window hangs up the pty: the script and attach get
-        // SIGHUP, attach exits, and the trap stops the session so it does not
-        // linger in the agents manager. attach stays a FOREGROUND child (run
-        // in the background it loses the tty and dies with kqueue EINVAL); zsh
-        // runs the trap once it returns. A normal detach (Ctrl+Z or the agent
-        // view) exits attach with no signal, the trap is cleared, and the
-        // session keeps running. Verified live in Ghostty 2026-09-16.
-        + "trap 'claude stop \"$__i\" >/dev/null 2>&1; exit 129' HUP TERM; "
+        // Closing the tab hangs up the pty and ends only the attach: the
+        // session runs on in the daemon, as an iMac session runs on in tmux
+        // (Ben, 2026-11-07). Only ClaudeHUD's stop control ends it.
         + "claude attach \"$__i\"; "
-        + "trap - HUP TERM; "
         + "else printf '%s\\n' \"$__o\"; \(plain); fi"
 }
 
@@ -939,8 +914,8 @@ func daemonizedClaudeCommand(_ argSuffix: String, remoteControlName: String? = n
 /// optionally followed by ` :: <resolvedVaultPath>` — when the path is present
 /// the command uses it directly (no index.md re-derivation, no user
 /// confirmation); when absent it falls back to index.md resolution. Kept on
-/// one line so it survives every delivery path (Ghostty temp script,
-/// Terminal/iTerm AppleScript `do script`, clipboard).
+/// one line so it survives every delivery path (the iMac launcher's
+/// `--prompt`, a shell command line).
 func magicLaunchArg(projectName: String, resolvedVaultPath: String?) -> String {
     if let vaultPath = resolvedVaultPath, !vaultPath.isEmpty {
         return "/project \(projectName) :: \(vaultPath)"
@@ -950,37 +925,25 @@ func magicLaunchArg(projectName: String, resolvedVaultPath: String?) -> String {
 
 /// Fire a magic launch for `projectName` rooted at repo `cwd`, loading vault
 /// context. `resolvedVaultPath` non-nil → folder already resolved (the Projects
-/// tab knows it directly). Returns whether the terminal auto-opened (false →
-/// clipboard fallback). Enables Remote Control named after the project so each
-/// session is identifiable in the agents list.
-///
-/// `liveSessions` are the project's OWN live interactive sessions, most recent
-/// first (`VaultProjectService.liveSessions(forFolders:in:)` with that one
-/// folder). If one of them is attached in a Ghostty window, the new session
-/// opens as a tab there instead of in a new window. A parent project passes
-/// only its own sessions, never its children's, so a parent launch cannot land
-/// in a child's window.
+/// tab knows it directly). Returns whether the launch is under way. Enables
+/// Remote Control named after the project so each session is identifiable in
+/// the agents list.
 @MainActor
 func performMagicLaunch(projectName: String, cwd: String, resolvedVaultPath: String?,
-                        liveSessions: [AgentSession] = [],
-                        onThisMac: Bool = false,
-                        terminalService: TerminalService) -> Bool {
+                        onThisMac: Bool = false) -> Bool {
     // The vault path is the Mac's; `/project` reads only its last folder
     // name, which is the same on the iMac.
     let arg = magicLaunchArg(projectName: projectName, resolvedVaultPath: resolvedVaultPath)
-    return launchClaudeSession(prompt: arg, name: projectName, cwd: cwd,
-                               existingGhosttyPid: liveSessions.compactMap(\.attachedGhosttyPid).first,
-                               onThisMac: onThisMac, terminalService: terminalService)
+    return launchClaudeSession(prompt: arg, name: projectName, cwd: cwd, onThisMac: onThisMac)
 }
 
 /// THE HUD launch path for a Claude session (new session and resume).
 ///
 /// On the iMac first (Ben, 2026-11-03: every session lives there): the iMac's
 /// one launcher (`IMacLauncher`) starts it in tmux with Remote Control and
-/// permissions bypassed, and a Ghostty window (or a tab in
-/// `existingGhosttyPid`'s window) attaches to it over ssh. Closing the window
-/// only detaches. `prompt` is the session's first message; `resume` a
-/// transcript's id.
+/// permissions bypassed, and a WezTerm tab titled with its tmux session
+/// attaches to it over ssh. Closing the tab only detaches. `prompt` is the
+/// session's first message; `resume` a transcript's id.
 ///
 /// On this Mac, by the daemon-registered `claude --bg` + `claude attach`
 /// form (`launchMacSession`), only where the session is not on the iMac: a
@@ -997,17 +960,14 @@ func performMagicLaunch(projectName: String, cwd: String, resolvedVaultPath: Str
 /// else, since this Mac holds only a read-only copy of that transcript.
 ///
 /// Returns true: the launch is under way (the iMac's answer takes a few
-/// seconds, so the window opens when it comes).
+/// seconds, so the tab opens when it comes).
 @MainActor
 @discardableResult
 func launchClaudeSession(prompt: String? = nil, resume: String? = nil, name: String, cwd: String,
                          host: SessionHost = .mac,
-                         existingGhosttyPid: pid_t? = nil,
-                         onThisMac: Bool = false,
-                         terminalService: TerminalService) -> Bool {
+                         onThisMac: Bool = false) -> Bool {
     let onMac: @MainActor () -> Bool = {
-        launchMacSession(prompt: prompt, resume: resume, name: name, cwd: cwd,
-                         existingGhosttyPid: existingGhosttyPid, terminalService: terminalService)
+        launchMacSession(prompt: prompt, resume: resume, name: name, cwd: cwd)
     }
     let folder: String
     let macFallback: Bool
@@ -1037,15 +997,11 @@ func launchClaudeSession(prompt: String? = nil, resume: String? = nil, name: Str
         await MainActor.run {
             switch outcome {
             case .running(let answer):
-                let app = FileManager.default.fileExists(atPath: "/Applications/Ghostty.app")
-                    ? "/Applications/Ghostty.app" : nil
-                let bg = UserDefaults.standard.bool(forKey: "history.useColors")
-                    ? TerminalService.projectColor(for: name) : nil
-                // inDirectory: the Mac's copy of the folder, for the window's
-                // title (the project's name); the session runs on the iMac.
-                terminalService.launchWithCommand(IMacLauncher.attachCommand(answer), inDirectory: cwd,
-                                                  usingApp: app, backgroundColor: bg,
-                                                  existingGhosttyPid: existingGhosttyPid)
+                // A session already there may have its tab already: the
+                // WezTerm config opens one for every live iMac session.
+                let title = IMacLauncher.tabTitle(answer)
+                WezTerm.open(title: title, argv: IMacLauncher.attachArgv(answer),
+                             find: { $0.first { $0.tabTitle == title } })
             case .notOnIMac(let reason):
                 if let fallback { fallback() } else { showIMacFailure(reason, detail: detail, offerMac: nil) }
             case .failed(let reason):
@@ -1074,29 +1030,25 @@ private func showIMacFailure(_ reason: String, detail: String, offerMac: (@MainA
     if alert.runModal() == .alertFirstButtonReturn, let offerMac { offerMac() }
 }
 
-/// A session on this Mac: a new Ghostty window, or a new tab in
-/// `existingGhosttyPid`'s window (titled, folder pre-trusted by
-/// `launchWithCommand`) running the daemon-registered `claude --bg … ` +
+/// A session on this Mac: a new WezTerm tab (titled `WezTerm.macTabTitle`,
+/// the folder pre-trusted) running the daemon-registered `claude --bg … ` +
 /// `claude attach` form, so the session is in the roster and gets its
 /// Projects/Agents badges and click-to-focus. A foreground `claude` does NOT
 /// register (verified 2026-09-16: no roster worker, no jobs dir). Only
 /// `launchClaudeSession` calls it, for a session that is not on the iMac.
 @MainActor
 @discardableResult
-private func launchMacSession(prompt: String?, resume: String?, name: String, cwd: String,
-                              existingGhosttyPid: pid_t?, terminalService: TerminalService) -> Bool {
+private func launchMacSession(prompt: String?, resume: String?, name: String, cwd: String) -> Bool {
     // Single-quote the prompt for the shell (every ' becomes '\'' and the
     // whole string is wrapped in '...') so spaces in the project name or vault
     // path stay a single token and any ' in them cannot break out.
     var argSuffix = resume.map { " --resume \($0)" } ?? ""
     if let prompt { argSuffix += " " + IMacLauncher.shellQuote(prompt) }
     let command = daemonizedClaudeCommand(argSuffix, remoteControlName: name)
-    let ghosttyPath = "/Applications/Ghostty.app"
-    let app = FileManager.default.fileExists(atPath: ghosttyPath) ? ghosttyPath : nil
-    let useColors = UserDefaults.standard.bool(forKey: "history.useColors")
-    let bg = useColors ? TerminalService.projectColor(for: name) : nil
-    return terminalService.launchWithCommand(command, inDirectory: cwd, usingApp: app, backgroundColor: bg,
-                                             existingGhosttyPid: existingGhosttyPid)
+    TerminalService.preTrustFolder(cwd)
+    // A new session has no tab yet: always a new one.
+    return WezTerm.open(title: WezTerm.macTabTitle(project: name), argv: WezTerm.shellArgv(command),
+                        cwd: cwd, find: { _ in nil })
 }
 
 // MARK: - Session Detail Row
@@ -1113,14 +1065,8 @@ struct SessionDetailRow: View {
     /// History tab only: the session's project (resolved Obsidian project,
     /// else repo folder). Nil where the project is already the context.
     var projectTag: (name: String, isUnclaimed: Bool)? = nil
-    @EnvironmentObject var terminalService: TerminalService
     @State private var feedback: String?
     @Environment(\.fontScale) private var scale
-
-    /// The `>_` action resumes in Ghostty.
-    private var hasGhostty: Bool {
-        terminalService.installedLaunchers.contains { $0.name == "Ghostty" }
-    }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -1180,15 +1126,13 @@ struct SessionDetailRow: View {
                     .font(.custom("Fira Sans", size: 10 * scale))
                     .foregroundColor(.green)
             } else {
-                if hasGhostty {
-                    Button(action: resume) {
-                        Text(">_")
-                            .font(.custom("Fira Code", size: 9 * scale).weight(.semibold))
-                            .foregroundColor(.white)
-                    }
-                    .buttonStyle(.borderless)
-                    .hudTip("Resume in a new Ghostty window")
+                Button(action: resume) {
+                    Text(">_")
+                        .font(.custom("Fira Code", size: 9 * scale).weight(.semibold))
+                        .foregroundColor(.white)
                 }
+                .buttonStyle(.borderless)
+                .hudTip("Resume in a new WezTerm tab")
             }
         }
         .padding(.vertical, 5)
@@ -1260,54 +1204,10 @@ struct SessionDetailRow: View {
     }
 
     private func launch(_ projectName: String) {
-        let auto = launchClaudeSession(resume: session.id, name: projectName,
-                                       cwd: session.projectPath, host: session.host,
-                                       terminalService: terminalService)
-        feedback = auto ? "Opened!" : "Cmd+V"
+        let opened = launchClaudeSession(resume: session.id, name: projectName,
+                                         cwd: session.projectPath, host: session.host)
+        feedback = opened ? "Opened!" : "Not opened"
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { feedback = nil }
-    }
-}
-
-// MARK: - Terminal Popover
-
-struct TerminalPopover: View {
-    @EnvironmentObject var terminalService: TerminalService
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Launch Terminal")
-                .font(.custom("Fira Sans", size: 13).weight(.semibold))
-                .foregroundColor(.secondary)
-                .padding(.bottom, 2)
-
-            if terminalService.installedTerminals.isEmpty {
-                Text("No terminal apps found.")
-                    .font(.custom("Fira Sans", size: 13))
-                    .foregroundColor(.secondary)
-            } else {
-                ForEach(terminalService.installedTerminals, id: \.path) { terminal in
-                    Button(action: {
-                        terminalService.select(terminal.path)
-                        terminalService.launch()
-                    }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: terminalService.selectedPath == terminal.path
-                                  ? "checkmark.circle.fill" : "circle")
-                                .foregroundColor(terminalService.selectedPath == terminal.path
-                                                 ? .accentColor : .secondary)
-                                .frame(width: 16)
-                            Text(terminal.name)
-                                .font(.custom("Fira Sans", size: 13))
-                                .foregroundColor(.primary)
-                            Spacer()
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .padding(12)
-        .frame(width: 200)
     }
 }
 
@@ -1379,7 +1279,7 @@ struct InfoPopover: View {
                     .foregroundColor(.secondary)
 
                 InfoRow(icon: "star.fill", text: "**Star:** Pin projects to a Starred section at the top of history")
-                InfoRow(icon: "terminal", text: "**Terminal:** Click to launch, long-press to switch. Ghostty, iTerm2, Terminal, and more")
+                InfoRow(icon: "terminal", text: "**Terminal:** Sessions open as tabs in WezTerm; click `>_` for a new one, right-click to choose the machine")
                 // DISABLED — notifications superseded by the daemon agent handler.
                 // InfoRow(icon: "bell.fill", text: "**Notifications:** Desktop via macOS, mobile via [ntfy.sh](https://ntfy.sh)")
                 DancingTextToggle()

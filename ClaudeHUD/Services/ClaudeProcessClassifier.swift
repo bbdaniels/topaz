@@ -5,13 +5,14 @@ import Foundation
 // process tables. The live gathering (ps, lsof, the daemon roster and the job
 // state files) is `ClaudeProcessSnapshot.capture()` at the bottom.
 //
-// How the daemon lays processes out (observed 2026-10-05, CLI 2.1.289):
+// How the daemon lays processes out (observed 2026-10-05, CLI 2.1.289; the
+// terminal is WezTerm since 2026-11-07):
 //
 //   claude daemon run …                              the supervisor
 //     claude bg-pty-host --bg-pty-host …/spare/<x>.pty.sock … --bg-spare …
 //       claude bg-spare --bg-spare …/spare/<x>.claim.sock   the worker (REPL)
-//   ghostty --title=<project> --command=/tmp/claude-resume-*.sh
-//     login → zsh → claude attach <short>                  an attach client
+//   wezterm-gui (a tab ClaudeHUD spawned)
+//     zsh -l -c … → claude attach <short>                  an attach client
 //
 // The daemon keeps one unclaimed spare warm (cwd = …/spare, no rv socket).
 // Claiming it hands it a session: the worker then holds

@@ -6,7 +6,6 @@ import AppKit
 /// without taking over a terminal. Attach opens the session in a terminal tab.
 struct AgentsView: View {
     @EnvironmentObject var service: AgentsService
-    @EnvironmentObject var terminalService: TerminalService
     @EnvironmentObject var sessionHistory: SessionHistoryService
     @Environment(\.fontScale) private var scale
 
@@ -260,9 +259,9 @@ struct AgentsView: View {
     // MARK: - Actions
 
     /// The one open path (`AgentsService.open`): the session's own tab when
-    /// it is attached, else a new tab in its project's window.
+    /// it is open in one, else a new tab.
     private func attach(_ a: AgentSession) {
-        if !service.open(id: a.id, terminalService: terminalService) { NSSound.beep() }
+        if !service.open(id: a.id) { NSSound.beep() }
     }
 
     private func showLogs(_ a: AgentSession) {
@@ -364,10 +363,8 @@ private struct AgentRow: View {
                             .background(Color.secondary.opacity(0.15))
                             .clipShape(Capsule())
                     }
-                    // Every attached row carries a chip naming the window
-                    // it is attached in: the title when we have one
-                    // (Ghostty parent), a plain "(attached)" label
-                    // otherwise (Terminal/iTerm parent).
+                    // Every row open in a WezTerm tab carries a chip
+                    // naming the tab.
                     if agent.isRemoteControl {
                         HStack(spacing: 3) {
                             Image(systemName: "iphone")
@@ -380,21 +377,18 @@ private struct AgentRow: View {
                         .background(Color.accentColor.opacity(0.15))
                         .clipShape(Capsule())
                         .help("Started from the Claude app; click ➜ to open it on claude.ai")
-                    } else if agent.isOpen {
-                        let label = agent.attachedWindowTitle ?? "(attached)"
+                    } else if let tab = agent.attachedTab {
                         HStack(spacing: 3) {
                             Image(systemName: "macwindow")
                                 .font(.system(size: 8 * scale))
-                            Text(label)
+                            Text(tab)
                                 .font(.system(size: 8 * scale, weight: .medium))
                         }
                         .foregroundColor(.accentColor)
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(Color.accentColor.opacity(0.15))
                         .clipShape(Capsule())
-                        .help(agent.attachedWindowTitle.map {
-                            "Attached in Ghostty window \"\($0)\" — click ➜ to raise it"
-                        } ?? "Attached via `claude attach` in a non-Ghostty terminal")
+                        .help("Open in the WezTerm tab \"\(tab)\"; click ➜ to bring it forward")
                     }
                     // Liveness blip: the daemon's state.json lags real
                     // activity by minutes for some sessions, but the

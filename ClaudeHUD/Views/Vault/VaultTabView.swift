@@ -84,9 +84,7 @@ struct VaultTabView: View {
                             if !collapsedSections.contains(section.title) {
                                 ForEach(section.nodes) { node in
                                     // Parent row: badge and click-to-focus span
-                                    // the family; the launch gets its OWN
-                                    // sessions only, so it can never open as a
-                                    // tab in a child's Ghostty window.
+                                    // the family.
                                     ProjectRowView(
                                         project: node.project,
                                         isChild: false,
@@ -95,8 +93,7 @@ struct VaultTabView: View {
                                         liveSessions: node.liveCounts(in: live),
                                         sessionLines: lines[node.project.name] ?? [],
                                         lostTrees: lost[node.project.name] ?? [],
-                                        badgeSessionsProvider: { liveSessions(forFolders: node.folderNames) },
-                                        ownSessionsProvider: { liveSessions(forFolders: [node.project.name]) }
+                                        badgeSessionsProvider: { liveSessions(forFolders: node.folderNames) }
                                     )
                                     ForEach(node.childrenByRecency(effectiveUpdated)) { child in
                                         ProjectRowView(
@@ -107,8 +104,7 @@ struct VaultTabView: View {
                                             liveSessions: live[child.name] ?? LiveSessionCounts(),
                                             sessionLines: lines[child.name] ?? [],
                                             lostTrees: lost[child.name] ?? [],
-                                            badgeSessionsProvider: { liveSessions(forFolders: [child.name]) },
-                                            ownSessionsProvider: { liveSessions(forFolders: [child.name]) }
+                                            badgeSessionsProvider: { liveSessions(forFolders: [child.name]) }
                                         )
                                     }
                                 }
@@ -389,7 +385,6 @@ private struct GeneralRowView: View {
     let lostTrees: [StrayTree]
     let sessions: () -> [AgentSession]
     @Environment(\.fontScale) private var scale
-    @EnvironmentObject private var terminalService: TerminalService
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -417,7 +412,7 @@ private struct GeneralRowView: View {
     }
 
     private func open(_ s: AgentSession) {
-        if !AgentsService.openListed(s, projectSessions: [], terminalService: terminalService) { NSSound.beep() }
+        if !AgentsService.open(s) { NSSound.beep() }
     }
 }
 
@@ -498,9 +493,6 @@ private struct ProjectRowView: View {
     /// the roster is walked on click only — holding the sessions here would
     /// re-diff every row on the 2s republish this list is built to avoid.
     let badgeSessionsProvider: () -> [AgentSession]
-    /// This project's OWN live sessions, never a child's: what a launch may
-    /// reuse a Ghostty window from.
-    let ownSessionsProvider: () -> [AgentSession]
     @Environment(\.fontScale) private var scale
     @EnvironmentObject private var terminalService: TerminalService
     @State private var launchHovering = false
@@ -595,17 +587,15 @@ private struct ProjectRowView: View {
     private func focusNextLiveSession() {
         let sessions = badgeSessionsProvider()
         guard let first = sessions.first(where: { $0.light(now: Date()) == .attention }) ?? sessions.first else {
-            GhosttyWindowService.activateApp(); return
+            WezTerm.activateApp(); return
         }
         open(first)
     }
 
-    /// Put Ben in the session, as a tab of this project's Ghostty window
-    /// (`AgentsService.openListed`, which the menu bar's Open Sessions also
-    /// calls).
+    /// Put Ben in the session's WezTerm tab (`AgentsService.open`, which the
+    /// menu bar's Open Sessions also calls).
     private func open(_ session: AgentSession) {
-        if !AgentsService.openListed(session, projectSessions: ownSessionsProvider(),
-                                     terminalService: terminalService) { NSSound.beep() }
+        if !AgentsService.open(session) { NSSound.beep() }
     }
 
     /// `onThisMac`: the right-click menu's "New session on the MacBook"; a
@@ -613,9 +603,7 @@ private struct ProjectRowView: View {
     private func launch(cwd: String, onThisMac: Bool = false) {
         _ = performMagicLaunch(projectName: project.name, cwd: cwd,
                                resolvedVaultPath: project.folder.path,
-                               liveSessions: ownSessionsProvider(),
-                               onThisMac: onThisMac,
-                               terminalService: terminalService)
+                               onThisMac: onThisMac)
         launched = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { launched = false }
     }

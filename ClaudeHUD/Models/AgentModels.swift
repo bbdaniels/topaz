@@ -13,9 +13,9 @@ enum AgentDisplayState: Equatable {
     case failed
     case stopped
     /// Presentation-only bucket (NOT a daemon state): an alive, non-terminal
-    /// session that has no Ghostty window open anywhere. A daemon-`blocked`
-    /// session whose window was closed is not awaiting *your* input — there
-    /// is no window to act in — so it must not wear urgent "Needs input".
+    /// session that has no terminal open anywhere. A daemon-`blocked`
+    /// session whose tab was closed is not awaiting *your* input — there
+    /// is no terminal to act in — so it must not wear urgent "Needs input".
     /// Collapses to one muted bucket at the very bottom. See `AgentSession.bucket`.
     case detached
     case other(String)
@@ -200,19 +200,14 @@ struct AgentSession: Identifiable, Equatable {
     let template: String?       // "claude", "bg", subagent name…
     let tempo: String?          // state.json.tempo (idle/working/blocked…)
     let inFlightTasks: Int      // state.json.inFlight.tasks
-    /// True iff a `claude attach <short>` process is currently alive somewhere
-    /// for this id. This is the only honest "open" signal: the daemon's
-    /// state can sit on `blocked` forever after the user closes the window,
-    /// and project-name window-title matching was conflating unrelated shorts.
+    /// True iff the session is open in a WezTerm tab (`AgentsService.scanAttaches`;
+    /// always true for an iMac or Remote Control row, which runs on without
+    /// one). This is the only honest "open" signal: the daemon's state can
+    /// sit on `blocked` forever after the tab closes.
     let isOpen: Bool
-    /// Title of the Ghostty window currently hosting `claude attach <id>`,
-    /// nil when no Ghostty ancestor was found (attached in a non-Ghostty
-    /// terminal, or not attached at all).
-    let attachedWindowTitle: String?
-    /// PID of the Ghostty process that owns the attached window, so the
-    /// AgentsView's attach action can raise *that* window directly instead
-    /// of fuzzy-matching by project name.
-    let attachedGhosttyPid: pid_t?
+    /// Title of the WezTerm tab the session is open in
+    /// (`AgentsService.scanAttaches`), nil when it is in none.
+    let attachedTab: String?
     /// Last-write time of the session's `.jsonl` transcript, when readable.
     /// The daemon flushes `state.json` event-driven and can fall minutes
     /// behind for active sessions; the transcript ticks on every model
@@ -236,7 +231,7 @@ struct AgentSession: Identifiable, Equatable {
     var remoteControlURL: URL? = nil
 
     /// Set only on an iMac row: the tmux session on the iMac that holds it,
-    /// which a click attaches a Ghostty window to over ssh. Nil for an iMac
+    /// which a click attaches a WezTerm tab to over ssh. Nil for an iMac
     /// session with no terminal (one the Remote Control server spawned from
     /// the phone or claude.ai), which a click first moves into the gate's
     /// tmux with the gate's `adopt` (AgentsService.open).
@@ -244,10 +239,6 @@ struct AgentSession: Identifiable, Equatable {
     /// The gate's command that attaches to `iMacTmux` (its own tmux server
     /// or the default one); nil from a gate that does not report it.
     var iMacAttach: String? = nil
-    /// The tty of the terminal attached to this session on this Mac (a
-    /// `claude attach` or an ssh `tmux attach`), which names its Ghostty tab
-    /// so a click can select that tab rather than only raise the window.
-    var attachedTTY: String? = nil
     /// The session's title, the one History shows (`SessionScan.sidecarTitle`),
     /// set by `AgentsService.reload` for a live session; nil when none is
     /// written yet.
@@ -361,10 +352,9 @@ struct AgentSession: Identifiable, Equatable {
         }
     }
 
-    /// True when a terminal on this Mac shows the session (a `claude attach`
-    /// or an ssh `tmux attach`), so a click raises it rather than opening a
-    /// new tab.
-    var hasWindow: Bool { attachedGhosttyPid != nil || attachedTTY != nil }
+    /// True when a WezTerm tab on this Mac shows the session, so a click
+    /// brings that tab forward rather than opening a new one.
+    var hasWindow: Bool { attachedTab != nil }
 
     /// The session's dot on its Projects line (`SessionLight`).
     func light(now: Date) -> SessionLight {

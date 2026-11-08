@@ -174,11 +174,16 @@ enum IMacLauncher {
         ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", sshHost, remoteCommand(r)]
     }
 
-    /// What a Ghostty window runs to show the session: its terminal on the
-    /// iMac. Closing the window detaches; the session runs on.
-    static func attachCommand(_ a: Answer) -> String {
-        "ssh -t \(sshHost) \(shellQuote(a.attach))"
+    /// What a WezTerm tab runs to show the session: its terminal on the
+    /// iMac, the argv the WezTerm config's own tabs run. Closing the tab
+    /// detaches; the session runs on.
+    static func attachArgv(_ a: Answer) -> [String] {
+        ["/usr/bin/ssh", "-t", sshHost, a.attach]
     }
+
+    /// The title of the session's WezTerm tab: its tmux session, `rc-<name>`,
+    /// the title the WezTerm config's sync looks for, so it opens no second tab.
+    static func tabTitle(_ a: Answer) -> String { a.session }
 
     /// The launcher's answer, read. `status` is ssh's exit status: 255 is
     /// ssh's own failure (the iMac asleep, offline, or the key refused).
@@ -251,18 +256,5 @@ enum IMacLauncher {
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return outcome(status: process.terminationStatus, stdout: data)
-    }
-
-    /// The tmux session an `ssh <iMac> tmux [-L <server>] attach -t '=<name>'`
-    /// command line attaches to, or nil for any other command.
-    static func attachTarget(command: String) -> String? {
-        let parts = command.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
-        guard let argv0 = parts.first, argv0 == "ssh" || argv0.hasSuffix("/ssh"),
-              parts.contains(sshHost),
-              let a = parts.firstIndex(of: "attach"), a > 0,
-              parts[..<a].contains(where: { $0.trimmingCharacters(in: CharacterSet(charactersIn: "'\"")).hasSuffix("tmux") }),
-              let t = parts[a...].firstIndex(of: "-t"), t + 1 < parts.count else { return nil }
-        let name = parts[t + 1].trimmingCharacters(in: CharacterSet(charactersIn: "'\"="))
-        return name.isEmpty ? nil : name
     }
 }

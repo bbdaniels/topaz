@@ -29,27 +29,19 @@ final class AgentsService: ObservableObject {
     /// appearance, and reaping is a delete, not a read.
     private var lastReapAt: Date?
 
-    /// Process-tree-derived "is this short attached anywhere" map. Each
-    /// `claude attach <short>` process is walked up to its terminal owner;
-    /// when the owner is a Ghostty process we also capture its
-    /// `--title=` and pid so the view can raise the exact window. This is
-    /// the honest answer to "can the user actually see and answer this
-    /// session right now" — title-matching on parent folder names was
-    /// happily routing two unrelated shorts to the same window.
+    /// Which sessions are open in a WezTerm tab, and in which (`WezTerm.attaches`):
+    /// an iMac session by its tab's title, its tmux session name; a Mac
+    /// daemon session by the terminal its `claude attach <short>` runs on.
+    /// This is the honest answer to "can Ben see and answer this session
+    /// right now". Empty when WezTerm is not running.
     ///
-    /// Scanned at most every 5s — `reload()` runs every 2s, but `ps` is
-    /// cheap enough that this matters only under load.
-    struct AttachInfo {
-        let windowTitle: String?   // nil when no Ghostty ancestor
-        let ghosttyPid: pid_t?
-        var tty: String? = nil     // the attach process's terminal, e.g. ttys016
-    }
+    /// Scanned at most every 5s; `reload()` runs every 2s.
+    typealias AttachInfo = WezTerm.Pane
 
-    /// The key `scanAttaches` files an iMac attach under: the tmux session
-    /// an `ssh … tmux attach -t =<name>` process on this Mac attaches to.
+    /// The key `scanAttaches` files an iMac session's tab under: its tmux session.
     nonisolated static func iMacAttachKey(_ tmux: String) -> String { "imac-tmux:" + tmux }
 
-    /// The key `scanAttaches` files this session's attach under: its tmux
+    /// The key `scanAttaches` files this session's tab under: its tmux
     /// session for an iMac session, its id for a Mac daemon session.
     nonisolated static func attachKey(_ a: AgentSession) -> String? {
         a.isIMac ? a.iMacTmux.map(iMacAttachKey) : a.id
@@ -61,62 +53,23 @@ final class AgentsService: ObservableObject {
         if let c = attachCache, Date().timeIntervalSince(c.at) < 5 {
             return c.map
         }
-        let map = Self.scanAttaches()
+        let map = Self.scanAttaches(panes: WezTerm.panes() ?? [])
         attachCache = (map, Date())
         return map
     }
 
-    /// One `ps` invocation gets the full process table. We index by pid
-    /// (ppid + raw command), then locate every `claude attach <short>`
-    /// process and walk parents (capped) to find a Ghostty owner. A short
-    /// can appear without a Ghostty parent (attached in Terminal/iTerm) —
-    /// still record it as attached, just without a window pid.
-    nonisolated static func scanAttaches() -> [String: AttachInfo] {
-        // The process table and the `claude attach <short>` recognizer are
-        // shared with the menu's process classifier, so the two can never
-        // disagree about which sessions are attached.
-        let procs = ClaudeProcessSnapshot.processTable().rows
-
-        var result: [String: AttachInfo] = [:]
-        for (_, info) in procs {
-            let short: String
-            if case .attachClient(let s) = ClaudeProcKind.of(command: info.command) {
-                short = s
-            } else if let tmux = IMacLauncher.attachTarget(command: info.command) {
-                short = iMacAttachKey(tmux)
-            } else { continue }
-            // Already recorded by a sibling (rare — multiple attach procs for
-            // the same short)? Keep the first; they pin the same window.
-            guard result[short] == nil else { continue }
-
-            // Walk ancestors, capped at 16 hops, looking for Ghostty.
-            var (cur, hops) = (info.ppid, 0)
-            let tty = info.tty.isEmpty || info.tty == "??" ? nil : info.tty
-            var attach = AttachInfo(windowTitle: nil, ghosttyPid: nil, tty: tty)
-            while cur > 1, hops < 16, let p = procs[cur] {
-                hops += 1
-                if p.command.contains("/Ghostty.app/") {
-                    let title = Self.parseTitle(from: p.command)
-                    attach = AttachInfo(windowTitle: title, ghosttyPid: pid_t(cur), tty: tty)
-                    break
-                }
-                cur = p.ppid
-            }
-            result[short] = attach
+    /// The tab of every session open in `panes`. The `claude attach <short>`
+    /// recognizer and the process table are the menu's process classifier's,
+    /// so the two can never disagree about which sessions are attached.
+    nonisolated static func scanAttaches(panes: [WezTerm.Pane]) -> [String: AttachInfo] {
+        guard !panes.isEmpty else { return [:] }
+        var clients: [(short: String, tty: String)] = []
+        for (_, info) in ClaudeProcessSnapshot.processTable().rows {
+            guard case .attachClient(let short) = ClaudeProcKind.of(command: info.command),
+                  !info.tty.isEmpty, info.tty != "??" else { continue }
+            clients.append((short, info.tty))
         }
-        return result
-    }
-
-    /// Parse a Ghostty `--title=<value>` arg out of a command line. The
-    /// kernel-returned command joins args with single spaces, so we read
-    /// until the next space (project titles ClaudeHUD launches with don't
-    /// contain whitespace).
-    nonisolated private static func parseTitle(from cmd: String) -> String? {
-        guard let r = cmd.range(of: "--title=") else { return nil }
-        let tail = cmd[r.upperBound...]
-        let end = tail.firstIndex(where: { $0 == " " || $0 == "\n" }) ?? tail.endIndex
-        let title = tail[..<end].trimmingCharacters(in: .whitespaces)
-        return title.isEmpty ? nil : title
+        return WezTerm.attaches(panes: panes, attachClients: clients, iMacKey: iMacAttachKey)
     }
 
     // `nonisolated` so the off-main launch sweep can resolve these paths
@@ -257,13 +210,11 @@ final class AgentsService: ObservableObject {
                 tempo: tempo,
                 inFlightTasks: inFlightTasks,
                 isOpen: attach != nil,
-                attachedWindowTitle: attach?.windowTitle,
-                attachedGhosttyPid: attach?.ghosttyPid,
+                attachedTab: attach?.tabTitle,
                 transcriptMtime: transcriptMtime,
                 worktreePath: worktreePath,
                 sessionId: (s["sessionId"] as? String)
                     ?? transcriptPath.map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent },
-                attachedTTY: attach?.tty,
                 inShell: cli?.status == "shell"
             ))
         }
@@ -301,8 +252,7 @@ final class AgentsService: ObservableObject {
                 tempo: nil,
                 inFlightTasks: 0,
                 isOpen: true,
-                attachedWindowTitle: nil,
-                attachedGhosttyPid: nil,
+                attachedTab: nil,
                 transcriptMtime: transcriptMtime,
                 worktreePath: nil,
                 sessionId: r.sessionId,
@@ -315,7 +265,7 @@ final class AgentsService: ObservableObject {
         // background every 10 s), so a project row shows them with the same
         // badges as the Mac's. Its cwd is mapped onto this Mac's checkout; no
         // pid, so nothing here can signal a local process; its tmux session,
-        // which a click attaches a Ghostty window to over ssh (never its
+        // which a click attaches a WezTerm tab to over ssh (never its
         // claude.ai page: Ben, 2026-11-03, "claude.ai ... is never the right
         // place to land"). The stop, logs and remove menu stays hidden.
         IMacLive.refresh { [weak self] in Task { @MainActor in self?.reload() } }
@@ -343,14 +293,12 @@ final class AgentsService: ObservableObject {
                 tempo: nil,
                 inFlightTasks: 0,
                 isOpen: true,
-                attachedWindowTitle: attach?.windowTitle,
-                attachedGhosttyPid: attach?.ghosttyPid,
+                attachedTab: attach?.tabTitle,
                 transcriptMtime: nil,
                 worktreePath: nil,
                 sessionId: r.sessionId,
                 iMacTmux: tmuxSession,
                 iMacAttach: r.attach,
-                attachedTTY: attach?.tty,
                 inShell: r.status == "shell"
             ))
         }
@@ -603,32 +551,22 @@ final class AgentsService: ObservableObject {
         return IMacLauncher.endFailure(status: process.terminationStatus, stdout: data)
     }
 
-    /// THE way the HUD puts Ben in a live session (Ben, 2026-11-03: one
-    /// window per project, each session a tab in it, never claude.ai when
-    /// there is a terminal). Already attached here: select its Ghostty tab
-    /// (by the attach's tty), else raise its window. Not attached: a new tab
-    /// in `projectWindow` (the Ghostty process of another session of the
-    /// same project), else a new window, running `tmux attach` over ssh for
-    /// an iMac session or `claude attach` for a Mac daemon session. A session
-    /// started from the phone or claude.ai has no terminal anywhere (Remote
-    /// Control spawns it headless), so it alone opens its claude.ai page.
-    /// False when nothing could be opened.
+    /// THE way the HUD puts Ben in a live session (Ben, 2026-11-03, never
+    /// claude.ai when there is a terminal; 2026-11-07, one WezTerm window, a
+    /// tab per session). Already open in a tab (found by a scan made at the
+    /// click, never the last one, which can name a tab closed since): that
+    /// tab comes forward. Not open: a new tab running `tmux attach` over ssh
+    /// for an iMac session or `claude attach` for a Mac daemon session. A
+    /// session started from the phone or claude.ai on this Mac has no
+    /// terminal anywhere (Remote Control spawns it headless), so it alone
+    /// opens its claude.ai page. False when nothing could be opened.
     @discardableResult
-    static func open(_ a: AgentSession, projectWindow: pid_t?, terminalService: TerminalService) -> Bool {
-        // Raise only an attach confirmed by a scan made now (`AttachFocus`):
-        // the session's attach as last scanned can name a window closed since,
-        // and a folder-name title match can raise an unrelated window.
-        let fresh = scanAttaches().mapValues { (ghosttyPid: $0.ghosttyPid, tty: $0.tty) }
-        if case .terminal(let pid, let tty) = AttachFocus.target(key: attachKey(a), fresh: fresh) {
-            if let tty, GhosttyWindowService.focusTerminal(inProcess: pid, tty: tty) { return true }
-            if GhosttyWindowService.focusWindow(hostPid: pid, titleContains: "") { return true }
+    static func open(_ a: AgentSession) -> Bool {
+        let key = attachKey(a)
+        let find: @Sendable ([WezTerm.Pane]) -> WezTerm.Pane? = { panes in
+            key.flatMap { scanAttaches(panes: panes)[$0] }
         }
-        // A new tab only in a Ghostty process that still runs.
-        let projectWindow = projectWindow.flatMap { NSRunningApplication(processIdentifier: $0) == nil ? nil : $0 }
-        let app = FileManager.default.fileExists(atPath: "/Applications/Ghostty.app") ? "/Applications/Ghostty.app" : nil
         let dir = a.cwd.isEmpty || !FileManager.default.fileExists(atPath: a.cwd) ? nil : a.cwd
-        let bg = UserDefaults.standard.bool(forKey: "history.useColors") && dir != nil
-            ? TerminalService.projectColor(for: URL(fileURLWithPath: a.cwd).lastPathComponent) : nil
         if a.isIMac {
             guard let tmux = a.iMacTmux else {
                 // No terminal: a session the Remote Control server spawned
@@ -642,9 +580,9 @@ final class AgentsService: ObservableObject {
                     await MainActor.run {
                         switch outcome {
                         case .running(let answer):
-                            terminalService.launchWithCommand(IMacLauncher.attachCommand(answer), inDirectory: dir,
-                                                              usingApp: app, backgroundColor: bg,
-                                                              existingGhosttyPid: projectWindow)
+                            let title = IMacLauncher.tabTitle(answer)
+                            WezTerm.open(title: title, argv: IMacLauncher.attachArgv(answer), cwd: dir,
+                                         find: { $0.first { $0.tabTitle == title } })
                         case .notOnIMac(let reason), .failed(let reason):
                             let alert = NSAlert()
                             alert.alertStyle = .warning
@@ -658,41 +596,29 @@ final class AgentsService: ObservableObject {
             }
             let answer = IMacLauncher.Answer(started: false, session: tmux,
                 attach: a.iMacAttach ?? "tmux attach -t " + IMacLauncher.shellQuote("=" + tmux), dir: nil)
-            return terminalService.launchWithCommand(IMacLauncher.attachCommand(answer), inDirectory: dir,
-                                                     usingApp: app, backgroundColor: bg, existingGhosttyPid: projectWindow)
+            return WezTerm.open(title: IMacLauncher.tabTitle(answer), argv: IMacLauncher.attachArgv(answer),
+                                cwd: dir, find: find)
         }
         if let url = a.remoteControlURL {
             NSWorkspace.shared.open(url)
             return true
         }
         if a.hasDaemonJob {
-            return terminalService.launchWithCommand("claude attach \(a.id)", inDirectory: dir,
-                                                     usingApp: app, backgroundColor: bg, existingGhosttyPid: projectWindow)
+            if let dir { TerminalService.preTrustFolder(dir) }
+            let project = URL(fileURLWithPath: a.cwd).lastPathComponent
+            return WezTerm.open(title: WezTerm.macTabTitle(project: project),
+                                argv: WezTerm.shellArgv("claude attach \(a.id)"), cwd: dir, find: find)
         }
-        return GhosttyWindowService.activateApp()
+        return WezTerm.activateApp()
     }
 
-    /// Open the session with this id through `open`, in a tab of its
-    /// project's window when another session of the project is attached
-    /// there. For the Agents tab and the menu bar, which hold an id, not a
-    /// project row. A session opened with `claude attach` only detaches when
-    /// its tab closes.
+    /// Open the session with this id through `open`. For the Agents tab and
+    /// the menu bar, which hold an id, not a session. A session opened with
+    /// `claude attach` only detaches when its tab closes.
     @discardableResult
-    /// A click on a listed session: its line in the Projects tab or its entry
-    /// in the menu bar's Open Sessions, the one action both call. A new tab
-    /// goes in the Ghostty window another session of its project is attached
-    /// in (`projectSessions`, its project's live sessions, most recent first;
-    /// empty under General), else a new window.
-    static func openListed(_ a: AgentSession, projectSessions: [AgentSession],
-                           terminalService: TerminalService) -> Bool {
-        open(a, projectWindow: projectSessions.lazy.compactMap(\.attachedGhosttyPid).first,
-             terminalService: terminalService)
-    }
-
-    func open(id: String, terminalService: TerminalService) -> Bool {
+    func open(id: String) -> Bool {
         guard let a = agents.first(where: { $0.id == id }) else { return false }
-        let window = agents.first(where: { $0.id != a.id && $0.cwd == a.cwd && $0.attachedGhosttyPid != nil })?.attachedGhosttyPid
-        return Self.open(a, projectWindow: window, terminalService: terminalService)
+        return Self.open(a)
     }
 
     /// Fetch recent output for the logs sheet.

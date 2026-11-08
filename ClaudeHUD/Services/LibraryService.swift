@@ -364,7 +364,7 @@ final class LibraryService: ObservableObject {
         let mac: Set<String>    = ["open", "osascript", "defaults", "launchctl",
                                    "sw_vers", "softwareupdate", "pmset",
                                    "diskutil", "hdiutil", "sips", "afplay"]
-        let claude: Set<String> = ["claude", "rtk", "xcodegen", "ghostty"]
+        let claude: Set<String> = ["claude", "rtk", "xcodegen", "wezterm"]
         if claude.contains(binary)  { return "Claude / HUD" }
         if git.contains(binary)     { return "Git & GitHub" }
         if pkgmgr.contains(binary)  { return "Package managers" }

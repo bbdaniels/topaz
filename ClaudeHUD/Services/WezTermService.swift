@@ -1,0 +1,216 @@
+import AppKit
+import Foundation
+import os
+
+private let logger = Logger(subsystem: "com.claudehud", category: "WezTerm")
+
+/// THE terminal ClaudeHUD opens sessions in (Ben, 2026-11-07): WezTerm, one
+/// window, one tab per session. Before this, Ghostty (and a picker of other
+/// terminals) opened a window per project and was steered over AppleScript.
+///
+/// Everything goes through WezTerm's own command line (`wezterm cli`), which
+/// reaches the running GUI over its socket: `list` the panes, `spawn` a tab,
+/// `set-tab-title`, `activate-tab`. WezTerm comes to the front through
+/// NSWorkspace, never AppleScript, so ClaudeHUD needs neither Apple Events nor
+/// Accessibility for it.
+///
+/// Titles are the contract with the WezTerm config (bbdaniels/personal,
+/// `deploy/mac/wezterm/wezterm.lua`): every few seconds it opens a tab for
+/// each live iMac session that has no tab titled with its tmux session name,
+/// `rc-<name>`. So a tab ClaudeHUD opens for an iMac session is titled exactly
+/// that, or the config would open a second one. A session on this Mac gets
+/// `<project> (Mac)` and is found again by the terminal of its
+/// `claude attach` process, which is the tab's own.
+///
+/// The parsing, matching and argument building are pure and unit tested;
+/// `open`, `panes` and `activateApp` run them.
+enum WezTerm {
+    static let appPath = "/Applications/WezTerm.app"
+    static let cliPath = appPath + "/Contents/MacOS/wezterm"
+    static let bundleIdentifier = "com.github.wez.wezterm"
+
+    /// One row of `wezterm cli list --format json`: a pane, its tab and window.
+    struct Pane: Equatable, Decodable {
+        let windowId: Int
+        let tabId: Int
+        let paneId: Int
+        let tabTitle: String
+        /// As WezTerm reports it, "/dev/ttys003".
+        let ttyName: String?
+
+        enum CodingKeys: String, CodingKey {
+            case windowId = "window_id", tabId = "tab_id", paneId = "pane_id"
+            case tabTitle = "tab_title", ttyName = "tty_name"
+        }
+
+        /// The tty as ps prints it, "ttys003".
+        var psTTY: String? { ttyName.map(WezTerm.psTTY) }
+    }
+
+    // MARK: Pure
+
+    /// The panes in `wezterm cli list --format json`; nil when it is not that.
+    static func parsePanes(_ data: Data) -> [Pane]? {
+        try? JSONDecoder().decode([Pane].self, from: data)
+    }
+
+    /// "/dev/ttys003" as ps prints it: "ttys003".
+    static func psTTY(_ ttyName: String) -> String {
+        ttyName.hasPrefix("/dev/") ? String(ttyName.dropFirst(5)) : ttyName
+    }
+
+    /// The title of a tab for a session on this Mac.
+    static func macTabTitle(project: String) -> String {
+        "\(project.isEmpty ? "Claude" : project) (Mac)"
+    }
+
+    /// The tab each attached session is in, by its attach key
+    /// (`AgentsService.attachKey`): an iMac session by its tab's title, its
+    /// tmux session name; a Mac session by the terminal of its
+    /// `claude attach <short>` process (`attachClients`, short and ps tty).
+    static func attaches(panes: [Pane], attachClients: [(short: String, tty: String)],
+                         iMacKey: (String) -> String) -> [String: Pane] {
+        var out: [String: Pane] = [:]
+        for p in panes where p.tabTitle.hasPrefix("rc-") {
+            let key = iMacKey(p.tabTitle)
+            if out[key] == nil { out[key] = p }
+        }
+        var byTTY: [String: Pane] = [:]
+        for p in panes { if let t = p.psTTY, byTTY[t] == nil { byTTY[t] = p } }
+        for c in attachClients where out[c.short] == nil {
+            if let p = byTTY[c.tty] { out[c.short] = p }
+        }
+        return out
+    }
+
+    /// What opening a session does: focus the tab it is already in, else
+    /// spawn one, into the window WezTerm has (a new window when it has none).
+    enum Step: Equatable {
+        case focus(tabId: Int)
+        case spawn(windowId: Int?)
+    }
+
+    static func plan(existing: Pane?, panes: [Pane]) -> Step {
+        if let existing { return .focus(tabId: existing.tabId) }
+        return .spawn(windowId: panes.first?.windowId)
+    }
+
+    /// Every call passes `--no-auto-start`, so a call made while WezTerm is
+    /// not running fails instead of starting a server without a window.
+    static func listArgs() -> [String] {
+        ["cli", "--no-auto-start", "list", "--format", "json"]
+    }
+
+    static func spawnArgs(argv: [String], cwd: String?, windowId: Int?) -> [String] {
+        var args = ["cli", "--no-auto-start", "spawn"]
+        if let windowId { args += ["--window-id", String(windowId)] } else { args.append("--new-window") }
+        if let cwd { args += ["--cwd", cwd] }
+        return args + ["--"] + argv
+    }
+
+    static func setTabTitleArgs(paneId: Int, title: String) -> [String] {
+        ["cli", "--no-auto-start", "set-tab-title", "--pane-id", String(paneId), title]
+    }
+
+    static func activateTabArgs(tabId: Int) -> [String] {
+        ["cli", "--no-auto-start", "activate-tab", "--tab-id", String(tabId)]
+    }
+
+    /// The argv of a tab running `command` in a login zsh, as any shell
+    /// window would (PATH entries such as ~/.local/bin, which holds `claude`,
+    /// live in ~/.zprofile), outside any Claude session's environment.
+    static func shellArgv(_ command: String) -> [String] {
+        ["/bin/zsh", "-l", "-c", "source ~/.zshrc 2>/dev/null; unset CLAUDECODE; " + command]
+    }
+
+    // MARK: Running it
+
+    static var isInstalled: Bool { FileManager.default.fileExists(atPath: cliPath) }
+
+    /// Run the command line; its output when it exits 0, else nil.
+    @discardableResult
+    static func run(_ args: [String]) -> Data? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: cliPath)
+        p.arguments = args
+        let out = Pipe()
+        p.standardInput = FileHandle.nullDevice
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return p.terminationStatus == 0 ? data : nil
+    }
+
+    /// The panes WezTerm has; nil when it is not running (or not installed).
+    static func panes() -> [Pane]? {
+        guard isInstalled, let data = run(listArgs()) else { return nil }
+        return parsePanes(data)
+    }
+
+    /// Bring WezTerm to the front, launching it when it is not running (its
+    /// `gui-startup` then opens a tab for every live iMac session).
+    @MainActor
+    @discardableResult
+    static func activateApp() -> Bool {
+        guard isInstalled else { return false }
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: appPath), configuration: config) { _, error in
+            if let error { logger.error("WezTerm did not open: \(error.localizedDescription, privacy: .public)") }
+        }
+        return true
+    }
+
+    /// Open a session's tab and bring WezTerm forward: focus the tab `find`
+    /// picks from the panes (scanned now, off the main thread), else spawn
+    /// `argv` in `cwd` as a new tab titled `title`. When WezTerm is not
+    /// running it is launched first; for an iMac session (`rc-` title) the
+    /// config's startup opens its tab, which is waited for (8 s) before one
+    /// is spawned. False only when WezTerm is not installed.
+    @MainActor
+    @discardableResult
+    static func open(title: String, argv: [String], cwd: String? = nil,
+                     find: @escaping @Sendable ([Pane]) -> Pane?) -> Bool {
+        guard isInstalled else { return false }
+        DispatchQueue.global(qos: .userInitiated).async {
+            var panes = WezTerm.panes()
+            if panes == nil {
+                DispatchQueue.main.sync { _ = WezTerm.activateApp() }
+                panes = waitForPanes(until: title.hasPrefix("rc-") ? { find($0) != nil } : { !$0.isEmpty })
+            }
+            guard let panes else {
+                logger.error("WezTerm did not answer; no tab for \(title, privacy: .public)")
+                return
+            }
+            switch plan(existing: find(panes), panes: panes) {
+            case .focus(let tabId):
+                run(activateTabArgs(tabId: tabId))
+            case .spawn(let windowId):
+                if let out = run(spawnArgs(argv: argv, cwd: cwd, windowId: windowId)),
+                   let paneId = Int(String(decoding: out, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    run(setTabTitleArgs(paneId: paneId, title: title))
+                } else {
+                    logger.error("WezTerm did not spawn a tab for \(title, privacy: .public)")
+                }
+            }
+            DispatchQueue.main.async { _ = WezTerm.activateApp() }
+        }
+        return true
+    }
+
+    /// Poll a WezTerm just launched (every 0.25 s, up to 8 s) until its panes
+    /// satisfy `ready`; the last panes it gave, nil when it never answered.
+    private static func waitForPanes(until ready: ([Pane]) -> Bool) -> [Pane]? {
+        var last: [Pane]?
+        for _ in 0..<32 {
+            if let p = panes() {
+                last = p
+                if ready(p) { return p }
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        return last
+    }
+}
