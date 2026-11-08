@@ -16,6 +16,7 @@
 //! on a 401 it is read once more, since Claude Code refreshes it.
 
 pub mod control;
+pub mod light;
 pub mod typing;
 
 use anyhow::{anyhow, Context};
@@ -162,6 +163,12 @@ fn run(
     let Some((mut socket, mut finish_now)) = connect_in_time(keyterms, commands, timing)? else {
         return Ok("cancelled while connecting");
     };
+    // Loupe's gem is blue from here, while words are heard, until fn is
+    // released; dropping the light on any way out turns it off.
+    let mut light = light::Light::new(post_to_loupe);
+    if !finish_now {
+        light.listening(Instant::now());
+    }
     log_first_buffer(&mut first_buffer_logged);
     set_read_timeout(&socket, POLL)?;
     socket.send(Message::text(KEEP_ALIVE))?;
@@ -200,6 +207,7 @@ fn run(
             Ok(Command::Finish) if final_by.is_none() => {
                 // Stop the microphone, send all that it heard, close.
                 drop(stream.take());
+                light.stopped();
                 while let Ok(samples) = audio.try_recv() {
                     resampler.push(&samples, &mut pcm);
                 }
@@ -216,6 +224,7 @@ fn run(
             Ok(Command::Finish) => {}
             Err(TryRecvError::Empty) => match final_by {
                 None => {
+                    light.listening(Instant::now());
                     while let Ok(samples) = audio.try_recv() {
                         resampler.push(&samples, &mut pcm);
                     }
@@ -332,6 +341,33 @@ fn run(
     Ok(end)
 }
 
+/// Tell Loupe the light's state (light.rs): a distributed notification,
+/// delivered at once, from the session's thread.
+fn post_to_loupe(state: light::State) {
+    use objc2::rc::autoreleasepool;
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    use objc2_foundation::{NSDictionary, NSString};
+    autoreleasepool(|_| unsafe {
+        let name = NSString::from_str(light::NOTIFICATION);
+        let state_key = NSString::from_str("state");
+        let pid_key = NSString::from_str("pid");
+        let state_value = NSString::from_str(state.as_str());
+        let pid_value = NSString::from_str(&std::process::id().to_string());
+        let info =
+            NSDictionary::from_slices(&[&*state_key, &*pid_key], &[&*state_value, &*pid_value]);
+        let center: *mut AnyObject =
+            msg_send![class!(NSDistributedNotificationCenter), defaultCenter];
+        let () = msg_send![
+            center,
+            postNotificationName: &*name,
+            object: std::ptr::null::<AnyObject>(),
+            userInfo: &*info,
+            deliverImmediately: true
+        ];
+    });
+    log::debug!("fn dictation: told Loupe {}", state.as_str());
+}
 /// Send the buffered audio in whole chunks, and the remainder too when `all`;
 /// how many samples went.
 fn send_audio(socket: &mut Socket, pcm: &mut Vec<i16>, all: bool) -> anyhow::Result<usize> {
