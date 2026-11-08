@@ -412,7 +412,19 @@ impl crate::TermWindow {
                         ElementContent::Poly { .. } => unreachable!(),
                         ElementContent::Children(mut kids) => {
                             if self.config.show_close_tab_button_in_tabs {
-                                kids.push(make_x_button(&font, &metrics, &colors, tab_idx, active));
+                                if self.config.tab_close_button_at_title_start && !kids.is_empty()
+                                {
+                                    let first = kids.remove(0);
+                                    let text = kids.first().map(|k| k.colors.text.clone());
+                                    kids.insert(
+                                        0,
+                                        make_title_start_close_button(first, text, &metrics, tab_idx),
+                                    );
+                                } else {
+                                    kids.push(make_x_button(
+                                        &font, &metrics, &colors, tab_idx, active,
+                                    ));
+                                }
                             }
                             ElementContent::Children(kids)
                         }
@@ -535,6 +547,35 @@ impl crate::TermWindow {
 
         Ok(ui_items)
     }
+}
+
+/// With `tab_close_button_at_title_start`, the first run of the tab title
+/// (the leading text up to the first change of color, such as a status dot
+/// drawn by `format-tab-title`) is the tab's close button: hovering it draws
+/// the × in its place, in the color of the title text after it, and a click
+/// there closes the tab.
+fn make_title_start_close_button(
+    first: Element,
+    text: Option<InheritableColor>,
+    metrics: &RenderMetrics,
+    tab_idx: usize,
+) -> Element {
+    let hover = ElementColors {
+        border: BorderColor::default(),
+        bg: first.colors.bg.clone(),
+        text: text.unwrap_or_else(|| first.colors.text.clone()),
+    };
+    first
+        .item_type(UIItemType::CloseTab(tab_idx))
+        .hover_colors(Some(hover))
+        .hover_poly(Some(HoverPoly {
+            poly: SizedPoly {
+                poly: X_BUTTON,
+                width: Dimension::Pixels(metrics.cell_size.height as f32 / 2.),
+                height: Dimension::Pixels(metrics.cell_size.height as f32 / 2.),
+            },
+            line_width: metrics.underline_height.max(2),
+        }))
 }
 
 fn make_x_button(

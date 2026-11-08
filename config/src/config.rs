@@ -504,6 +504,13 @@ pub struct Config {
     #[dynamic(default = "default_true")]
     pub show_close_tab_button_in_tabs: bool,
 
+    /// Fancy tab bar only: instead of a × at the right of each tab, the
+    /// first run of the tab title (its leading text up to the first change
+    /// of color, as a status dot drawn by format-tab-title) is the close
+    /// button: hovering it draws the × in its place, a click closes the tab.
+    #[dynamic(default)]
+    pub tab_close_button_at_title_start: bool,
+
     /// If true, show_tab_index_in_tab_bar uses a zero-based index.
     /// The default is false and the tab shows a one-based index.
     #[dynamic(default)]

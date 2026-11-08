@@ -67,6 +67,14 @@ pub struct PixelSizedPoly {
     pub height: f32,
 }
 
+/// A poly drawn in place of an element's content while the mouse is over
+/// the element, as the close button drawn over a tab title's first run.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HoverPoly {
+    pub poly: SizedPoly,
+    pub line_width: isize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SizedPoly {
     pub poly: &'static [Poly],
@@ -233,6 +241,7 @@ pub struct Element {
     pub border_corners: Option<Corners>,
     pub colors: ElementColors,
     pub hover_colors: Option<ElementColors>,
+    pub hover_poly: Option<HoverPoly>,
     pub font: Rc<LoadedFont>,
     pub content: ElementContent,
     pub presentation: Option<Presentation>,
@@ -256,6 +265,7 @@ impl Element {
             vertical_align: VerticalAlign::default(),
             colors: ElementColors::default(),
             hover_colors: None,
+            hover_poly: None,
             font: Rc::clone(font),
             content,
             presentation: None,
@@ -344,6 +354,11 @@ impl Element {
         self
     }
 
+    pub fn hover_poly(mut self, poly: Option<HoverPoly>) -> Self {
+        self.hover_poly = poly;
+        self
+    }
+
     pub fn line_height(mut self, line_height: Option<f64>) -> Self {
         self.line_height = line_height;
         self
@@ -418,6 +433,8 @@ pub struct ComputedElement {
     pub border_corners: Option<PixelCorners>,
     pub colors: ElementColors,
     pub hover_colors: Option<ElementColors>,
+    /// Drawn in place of the content while the mouse is over the element
+    pub hover_poly: Option<(PixelSizedPoly, isize)>,
     /// The outer bounds of the area enclosed by the padding
     pub padding: RectF,
     /// The outer bounds of the content
@@ -569,6 +586,9 @@ impl super::TermWindow {
             .border_corners
             .as_ref()
             .map(|c| c.to_pixels(context));
+        let hover_poly = element
+            .hover_poly
+            .map(|h| (h.poly.to_pixels(context), h.line_width));
         let style = element.font.style();
         let border = element.border.to_pixels(context);
         let padding = element.padding.to_pixels(context);
@@ -678,6 +698,7 @@ impl super::TermWindow {
                     border_corners,
                     colors: element.colors.clone(),
                     hover_colors: element.hover_colors.clone(),
+                    hover_poly,
                     bounds: rects.bounds,
                     border_rect: rects.border_rect,
                     padding: rects.padding,
@@ -791,6 +812,7 @@ impl super::TermWindow {
                     border_corners,
                     colors: element.colors.clone(),
                     hover_colors: element.hover_colors.clone(),
+                    hover_poly,
                     bounds: rects.bounds,
                     border_rect: rects.border_rect,
                     padding: rects.padding,
@@ -811,6 +833,7 @@ impl super::TermWindow {
                     border_corners,
                     colors: element.colors.clone(),
                     hover_colors: element.hover_colors.clone(),
+                    hover_poly,
                     bounds: rects.bounds,
                     border_rect: rects.border_rect,
                     padding: rects.padding,
@@ -833,30 +856,46 @@ impl super::TermWindow {
         let layer = gl_state.layer_for_zindex(element.zindex)?;
         let mut layers = layer.quad_allocator();
 
-        let colors = match &element.hover_colors {
-            Some(hc) => {
-                let hovering =
-                    match &self.current_mouse_event {
-                        Some(event) => {
-                            let mouse_x = event.coords.x as f32;
-                            let mouse_y = event.coords.y as f32;
-                            mouse_x >= element.bounds.min_x()
-                                && mouse_x <= element.bounds.max_x()
-                                && mouse_y >= element.bounds.min_y()
-                                && mouse_y <= element.bounds.max_y()
-                        }
-                        None => false,
-                    } && matches!(self.current_mouse_capture, None | Some(MouseCapture::UI));
-                if hovering {
-                    hc
-                } else {
-                    &element.colors
+        let hovering = (element.hover_colors.is_some() || element.hover_poly.is_some())
+            && match &self.current_mouse_event {
+                Some(event) => {
+                    let mouse_x = event.coords.x as f32;
+                    let mouse_y = event.coords.y as f32;
+                    mouse_x >= element.bounds.min_x()
+                        && mouse_x <= element.bounds.max_x()
+                        && mouse_y >= element.bounds.min_y()
+                        && mouse_y <= element.bounds.max_y()
                 }
+                None => false,
             }
-            None => &element.colors,
+            && matches!(self.current_mouse_capture, None | Some(MouseCapture::UI));
+        let colors = match &element.hover_colors {
+            Some(hc) if hovering => hc,
+            _ => &element.colors,
         };
 
         self.render_element_background(element, colors, &mut layers, inherited_colors)?;
+
+        if let (true, Some((poly, line_width))) = (hovering, &element.hover_poly) {
+            // Centered in the content box, in place of the content.
+            let rect = element.content_rect;
+            let origin = rect.origin
+                + euclid::vec2(
+                    ((rect.width() - poly.width) / 2.).max(0.),
+                    ((rect.height() - poly.height) / 2.).max(0.),
+                );
+            let mut quad = self.poly_quad(
+                &mut layers,
+                1,
+                origin,
+                poly.poly,
+                *line_width,
+                euclid::size2(poly.width, poly.height),
+                LinearRgba::TRANSPARENT,
+            )?;
+            self.resolve_text(colors, inherited_colors).apply(&mut quad);
+            return Ok(());
+        }
         let left = self.dimensions.pixel_width as f32 / -2.0;
         let top = self.dimensions.pixel_height as f32 / -2.0;
         match &element.content {

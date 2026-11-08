@@ -666,6 +666,7 @@ impl crate::TermWindow {
             border: PixelDimension::default(),
             border_rect: background_rect,
             border_corners: None,
+            hover_poly: None,
             colors: ElementColors {
                 border: BorderColor::default(),
                 bg: if self.window_background.is_empty() {
