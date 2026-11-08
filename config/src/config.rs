@@ -524,6 +524,19 @@ pub struct Config {
     #[dynamic(default)]
     pub fn_dictation_keyterms: Vec<String>,
 
+    /// Topaz: when the mouse rests on an image file path or an http(s)
+    /// image URL in a pane (png, jpg, jpeg, gif or webp), draw the image
+    /// beside that line. The preview is drawn over the pane by the GUI and
+    /// never written into the terminal, so full-screen programs such as
+    /// Claude Code are not disturbed. Paths are shown only for panes on
+    /// this machine.
+    #[dynamic(default = "default_true")]
+    pub image_preview_on_hover: bool,
+
+    /// Topaz: the tallest the hover image preview is drawn, in terminal rows.
+    #[dynamic(default = "default_image_preview_max_rows")]
+    pub image_preview_max_rows: u16,
+
     /// If true, show_tab_index_in_tab_bar uses a zero-based index.
     /// The default is false and the tab shows a one-based index.
     #[dynamic(default)]
@@ -2129,6 +2142,10 @@ fn default_shape_cache_size() -> usize {
 
 fn default_line_state_cache_size() -> usize {
     1024
+}
+
+fn default_image_preview_max_rows() -> u16 {
+    20
 }
 
 fn default_line_quad_cache_size() -> usize {

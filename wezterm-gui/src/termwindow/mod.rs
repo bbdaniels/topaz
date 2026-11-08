@@ -74,6 +74,7 @@ pub mod box_model;
 pub mod charselect;
 pub mod clipboard;
 mod dictation;
+pub mod image_preview;
 pub mod keyevent;
 pub mod modal;
 mod mouseevent;
@@ -429,6 +430,9 @@ pub struct TermWindow {
     /// The URL over which we are currently hovering
     current_highlight: Option<Arc<Hyperlink>>,
 
+    /// The image reference the mouse rests on, and the decoded previews
+    image_preview: image_preview::ImagePreview,
+
     quad_generation: usize,
     shape_generation: usize,
     shape_cache: RefCell<LfuCache<ShapeCacheKey, anyhow::Result<Rc<Vec<ShapedInfo>>>>>,
@@ -741,6 +745,7 @@ impl TermWindow {
             current_mouse_capture: None,
             last_mouse_click: None,
             current_highlight: None,
+            image_preview: Default::default(),
             quad_generation: 0,
             shape_generation: 0,
             shape_cache: RefCell::new(LfuCache::new(
