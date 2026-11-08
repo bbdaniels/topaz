@@ -66,8 +66,7 @@ final class WezTermServiceTests: XCTestCase {
     /// tab titled with its tmux name, so the tab ClaudeHUD opens carries that
     /// name exactly; a Mac session's title can never be taken for one.
     func testAnIMacTabIsTitledWithItsTmuxSession() {
-        let answer = IMacLauncher.Answer(started: true, session: "rc-probe",
-                                         attach: "tmux -L pi-gate attach -t =rc-probe", dir: nil)
+        let answer = IMacLauncher.Answer(started: true, session: "rc-probe", dir: nil)
         XCTAssertEqual(IMacLauncher.tabTitle(answer), "rc-probe")
         // tmux names have no spaces (pi-gate's NAME is [a-z0-9-]), a Mac title always has one
         XCTAssertTrue(WezTerm.macTabTitle(project: "rc-probe").contains(" "))

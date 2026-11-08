@@ -126,15 +126,24 @@ enum VaultWatch {
     /// lost track, so only a scan can say what changed.
     static let lostTrack: UInt32 = 0x01 | 0x02 | 0x04 | 0x20
 
+    /// ItemIsDir (kFSEventStreamEventFlagItemIsDir): the path is a folder. The
+    /// stream reports files too (kFSEventStreamCreateFlagFileEvents), so a
+    /// write to a top-level note (log.md, index.md, HOME.md) is one path deep
+    /// like a project folder, and only this flag tells them apart.
+    static let itemIsDir: UInt32 = 0x20000
+
     /// `vault` is the watched root as FSEvents reports it (symlinks resolved).
+    /// `flags[i]` is the event of `paths[i]`; a path with no flag counts as a
+    /// folder, so a short list can only cost a scan, never miss one.
     static func needsRescan(paths: [String], flags: [UInt32], vault: String) -> Bool {
         if flags.contains(where: { $0 & lostTrack != 0 }) { return true }
         let root = vault.hasSuffix("/") ? String(vault.dropLast()) : vault
-        return paths.contains { path in
+        return paths.indices.contains { i in
+            let path = paths[i]
             guard path.hasPrefix(root + "/") else { return false }
             let parts = path.dropFirst(root.count + 1).split(separator: "/", omittingEmptySubsequences: true)
             guard let top = parts.first, !top.hasPrefix(".") else { return false }
-            if parts.count == 1 { return true }
+            if parts.count == 1 { return (i < flags.count ? flags[i] : itemIsDir) & itemIsDir != 0 }
             return parts.count == 2 && parts[1] == "Tasks.md"
         }
     }

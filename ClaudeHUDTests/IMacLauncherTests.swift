@@ -71,8 +71,7 @@ final class IMacLauncherTests: XCTestCase {
 
         let there = Data(#"{"ok": true, "started": false, "attach": "tmux -L pi-gate attach -t =rc-probe", "session": "rc-probe", "alive": true}"#.utf8)
         XCTAssertEqual(IMacLauncher.outcome(status: 0, stdout: there),
-                       .running(.init(started: false, session: "rc-probe",
-                                      attach: "tmux -L pi-gate attach -t =rc-probe", dir: nil)))
+                       .running(.init(started: false, session: "rc-probe", dir: nil)))
 
         for phrase in [IMacLauncher.folderMissing, IMacLauncher.transcriptMissing] {
             let refusal = Data(#"{"ok": false, "error": "\#(phrase)"}"#.utf8)
