@@ -1254,7 +1254,7 @@ struct InfoPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("ClaudeHUD")
+            Text("Loupe")
                 .font(.custom("Fira Sans", size: 15).weight(.semibold))
 
             Divider()

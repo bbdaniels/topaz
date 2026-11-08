@@ -41,6 +41,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     /// "Hide Other Menu Bar Items": macOS 27's allow-list, held while on.
     private let menuBarHiding = MenuBarHiding()
+    /// The chevron left of the gem: shows the hidden items for a while.
+    private var chevronItem: NSStatusItem?
     /// Watches Topaz, the app that launched this one, while it runs.
     private var topazWatch: DispatchSourceProcess?
     /// Turns the gem blue while Topaz's fn dictation is listening.
@@ -62,10 +64,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         panelController = HUDPanelController(appState: appState)
         setupStatusItem()
+        setupChevron()
+        menuBarHiding.onChange = { [weak self] in self?.showChevron() }
         menuBarHiding.restore()
 
         appState.hotkeyService.register { [weak self] in
             self?.panelController?.toggle()
+        }
+        appState.hotkeyService.register(.menuBarItems) { [weak self] in
+            self?.menuBarHiding.toggleReveal()
         }
 
         Task {
@@ -80,6 +87,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let icon = NSImage(named: "MenuBarIcon")
             icon?.isTemplate = true
             button.image = icon
+            button.toolTip = "Loupe"
             button.action = #selector(statusItemClicked(_:))
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -88,6 +96,38 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         dictationWatch = DictationWatch(topazPid: topaz) { [weak self] listening in
             self?.showDictation(listening)
         }
+    }
+
+    /// Made after the gem, so macOS places it to the gem's left; Cmd-drag can
+    /// move it, and its place is kept under its autosave name.
+    private func setupChevron() {
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        item.autosaveName = "LoupeChevron"
+        item.button?.action = #selector(chevronClicked)
+        item.button?.target = self
+        chevronItem = item
+        showChevron()
+    }
+
+    /// Points left (click to show the hidden items) while hiding, right while
+    /// they show; gone while hiding is off or unavailable.
+    private func showChevron() {
+        guard let item = chevronItem else { return }
+        item.isVisible = menuBarHiding.isAvailable && menuBarHiding.isRemembered
+        let revealed = menuBarHiding.isRevealed
+        let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        let image = NSImage(systemSymbolName: revealed ? "chevron.right" : "chevron.left",
+                            accessibilityDescription: revealed ? "Hide menu bar items" : "Show all menu bar items")?
+            .withSymbolConfiguration(config)
+        image?.isTemplate = true
+        item.button?.image = image
+        item.button?.toolTip = revealed
+            ? "Hide the other menu bar items again (\(HotkeyService.Shortcut.menuBarItemsSymbols))"
+            : "Show all menu bar items for \(Int(MenuBarHiding.revealFor)) seconds (\(HotkeyService.Shortcut.menuBarItemsSymbols))"
+    }
+
+    @objc private func chevronClicked() {
+        menuBarHiding.toggleReveal()
     }
 
     /// The gem: blue (MenuBarIconListening, not a template) while dictation
@@ -304,7 +344,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func menuBarHidingItem() -> NSMenuItem {
         let item = NSMenuItem(title: "Hide Other Menu Bar Items", action: #selector(toggleMenuBarHiding), keyEquivalent: "")
         item.target = self
-        item.state = menuBarHiding.isOn ? .on : .off
+        item.state = menuBarHiding.isOn || menuBarHiding.isRevealed ? .on : .off
         if !menuBarHiding.isAvailable {
             item.action = nil
             item.isEnabled = false
@@ -312,7 +352,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else if let error = menuBarHiding.lastError, !menuBarHiding.isOn {
             item.toolTip = "macOS refused the last request: \(error.localizedDescription)"
         } else {
-            item.toolTip = "Shows only ClaudeHUD's and the system's items; the order you set with Cmd-drag is kept. While on, clicking the clock does not open Notification Center."
+            item.toolTip = "Shows only Loupe's, Tot's and the system's items; the order you set with Cmd-drag is kept. The chevron or \(HotkeyService.Shortcut.menuBarItemsSymbols) shows the rest for \(Int(MenuBarHiding.revealFor)) seconds. While on, the clock does not open Notification Center."
         }
         return item
     }

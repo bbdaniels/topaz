@@ -2,7 +2,7 @@ import XCTest
 
 /// MenuBarHiding: "Hide Other Menu Bar Items" holds macOS 27's menu bar
 /// allow-list (MenuBarClientCore's assessment-mode assertion) while it is on,
-/// letting only ClaudeHUD's item and the system's show (Ben, 2026-11-08).
+/// letting only Loupe's items, Tot's and the system's show (Ben, 2026-11-08).
 @MainActor
 final class MenuBarHidingTests: XCTestCase {
     /// Records each activation and answers when the test says so.
@@ -35,23 +35,48 @@ final class MenuBarHidingTests: XCTestCase {
         }
     }
 
+    /// Timers the test fires by hand.
+    final class FakeTimers {
+        final class Pending: MenuBarTimer {
+            let after: TimeInterval
+            let fire: @MainActor () -> Void
+            var cancelled = false
+            init(_ after: TimeInterval, _ fire: @escaping @MainActor () -> Void) { self.after = after; self.fire = fire }
+            func cancel() { cancelled = true }
+        }
+        var all: [Pending] = []
+        var live: [Pending] { all.filter { !$0.cancelled } }
+        func schedule(_ after: TimeInterval, _ fire: @escaping @MainActor () -> Void) -> MenuBarTimer {
+            let p = Pending(after, fire); all.append(p); return p
+        }
+        /// Fires the oldest timer still live, as the run loop would.
+        @MainActor func fireNext() {
+            guard let p = live.first else { return }
+            p.cancelled = true
+            p.fire()
+        }
+    }
+
     private var defaults: UserDefaults!
     private var fake: FakeRestrictor!
+    private var timers: FakeTimers!
 
     override func setUp() async throws {
         defaults = UserDefaults(suiteName: "MenuBarHidingTests-\(UUID().uuidString)")
         fake = FakeRestrictor()
+        timers = FakeTimers()
     }
 
     private func make() -> MenuBarHiding {
-        MenuBarHiding(restrictor: fake, defaults: defaults, ownBundleIdentifier: "com.claudehud.app")
+        MenuBarHiding(restrictor: fake, defaults: defaults, ownBundleIdentifier: "com.claudehud.app",
+                      schedule: { [timers] in timers!.schedule($0, $1) })
     }
 
-    func testTurningOnAllowsOnlyClaudeHUDAndTheSystemItems() {
+    func testTurningOnAllowsOnlyLoupeTotAndTheSystemItems() {
         let h = make()
         h.toggle()
         XCTAssertEqual(fake.calls.count, 1)
-        XCTAssertEqual(fake.calls[0].bundles, ["com.claudehud.app"])
+        XCTAssertEqual(fake.calls[0].bundles, ["com.claudehud.app", "com.iconfactory.Tot"])
         XCTAssertEqual(fake.calls[0].system, Array(0..<64))
         XCTAssertFalse(h.isOn, "on only once macOS grants it")
         fake.grant()
@@ -81,8 +106,97 @@ final class MenuBarHidingTests: XCTestCase {
     }
 
     func testALaunchWithItOffAsksNothing() {
+        defaults.set(false, forKey: MenuBarHiding.defaultsKey)
         make().restore()
         XCTAssertTrue(fake.calls.isEmpty)
+    }
+
+    func testHidingIsOnByDefaultAtLaunch() {
+        XCTAssertTrue(make().isRemembered)
+        let h = make()
+        h.restore()
+        XCTAssertEqual(fake.calls.count, 1)
+        fake.grant()
+        XCTAssertTrue(h.isOn)
+    }
+
+    func testTheChevronRevealsForTenSecondsThenHidesAgain() {
+        let h = make()
+        h.restore(); let first = fake.grant()
+        h.toggleReveal()
+        XCTAssertTrue(h.isRevealed)
+        XCTAssertFalse(h.isOn)
+        XCTAssertEqual(first.invalidated, 1, "everything shows")
+        XCTAssertEqual(timers.live.map(\.after), [10])
+        timers.fireNext()
+        XCTAssertFalse(h.isRevealed)
+        XCTAssertEqual(fake.calls.count, 2, "asked again")
+        fake.grant()
+        XCTAssertTrue(h.isOn)
+        XCTAssertTrue(make().isRemembered)
+    }
+
+    func testASecondPressHidesAtOnceAndCancelsTheTimer() {
+        let h = make()
+        h.restore(); fake.grant()
+        h.toggleReveal()
+        h.toggleReveal()
+        XCTAssertFalse(h.isRevealed)
+        XCTAssertTrue(timers.live.isEmpty)
+        XCTAssertEqual(fake.calls.count, 2)
+        fake.grant()
+        XCTAssertTrue(h.isOn)
+        timers.fireNext()
+        XCTAssertEqual(fake.calls.count, 2, "the cancelled timer asks nothing")
+    }
+
+    func testRevealDoesNothingWhileHidingIsOff() {
+        defaults.set(false, forKey: MenuBarHiding.defaultsKey)
+        let h = make()
+        h.toggleReveal()
+        XCTAssertFalse(h.isRevealed)
+        XCTAssertTrue(fake.calls.isEmpty)
+        XCTAssertTrue(timers.all.isEmpty)
+    }
+
+    func testTurningOffWhileRevealedStaysOff() {
+        let h = make()
+        h.restore(); fake.grant()
+        h.toggleReveal()
+        h.toggle()
+        XCTAssertFalse(h.isRevealed)
+        XCTAssertFalse(make().isRemembered)
+        timers.fireNext()
+        XCTAssertEqual(fake.calls.count, 1, "no hiding comes back")
+    }
+
+    func testQuitWhileRevealedKeepsTheSetting() {
+        let h = make()
+        h.restore(); fake.grant()
+        h.toggleReveal()
+        h.release()
+        XCTAssertTrue(timers.live.isEmpty)
+        XCTAssertTrue(make().isRemembered)
+    }
+
+    func testARestartCheckWhileRevealedAsksNothing() {
+        let h = make()
+        h.restore(); fake.grant()
+        h.toggleReveal()
+        fake.agent = 9001
+        h.verify()
+        XCTAssertEqual(fake.calls.count, 1)
+    }
+
+    func testChangesAreReported() {
+        let h = make()
+        var changes = 0
+        h.onChange = { changes += 1 }
+        h.restore(); fake.grant()
+        h.toggleReveal()
+        timers.fireNext()
+        fake.grant()
+        XCTAssertEqual(changes, 4, "granted, revealed, hiding again, granted")
     }
 
     func testQuitReleasesButKeepsTheSetting() {
@@ -98,8 +212,13 @@ final class MenuBarHidingTests: XCTestCase {
         let h = make()
         h.toggle(); fake.refuse()
         XCTAssertFalse(h.isOn)
-        XCTAssertFalse(make().isRemembered, "the checkmark and the setting agree")
         XCTAssertNotNil(h.lastError)
+        XCTAssertTrue(make().isRemembered, "the next launch asks again")
+        h.toggle()
+        XCTAssertEqual(fake.calls.count, 2, "the menu item asks again")
+        fake.grant()
+        XCTAssertTrue(h.isOn)
+        XCTAssertNil(h.lastError)
     }
 
     func testAGrantThatArrivesAfterTurningOffIsDroppedAtOnce() {
@@ -146,7 +265,7 @@ final class MenuBarHidingTests: XCTestCase {
         h.verify()
         fake.refuse()
         XCTAssertFalse(h.isOn)
-        XCTAssertFalse(make().isRemembered, "the checkmark and the setting agree")
+        XCTAssertNotNil(h.lastError)
     }
 
     func testTheRealEnforcerIsMenuBarAgent() {
