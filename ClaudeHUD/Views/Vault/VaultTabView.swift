@@ -726,9 +726,10 @@ extension LiveSessionLine {
 }
 
 /// One session under its project or under General: its dot, its title, its
-/// machine in grey. A click opens it (`onOpen`); under the pointer a × stops
-/// it at once through the gate's `end` on its machine, with no confirmation
-/// (Ben, 2026-11-03). Closing its terminal tab only detaches, and the dot
+/// machine in grey. A click opens it (`onOpen`); with the pointer on the dot
+/// the dot turns into a ×, and a click there stops the session at once
+/// through the gate's `end` on its machine, with no confirmation (Ben,
+/// 2026-11-03; the × moved from the far right onto the dot, 2026-11-08). Closing its terminal tab only detaches, and the dot
 /// turns grey (`SessionLight.noTab`). Once the × is pressed the name is
 /// struck through until the session is gone (Ben, 2026-11-08: "when
 /// something is truly being closed out, strikethrough text").
@@ -738,14 +739,35 @@ struct SessionLineView: View {
     let onOpen: () -> Void
     @Environment(\.fontScale) private var scale
     @State private var hovering = false
+    @State private var dotHovering = false
     @State private var stopping = false
+
+    /// The dot shows its × only while the pointer is on it and the session
+    /// can be stopped from here.
+    private var showsClose: Bool { dotHovering && !stopping && line.sessionId != nil }
 
     var body: some View {
         HStack(spacing: 6) {
+            Button(action: stop) {
+                ZStack {
+                    if showsClose {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9 * scale, weight: .semibold))
+                            .foregroundColor(.primary.opacity(0.8))
+                    } else {
+                        Circle().fill(line.light.color)
+                            .frame(width: 6, height: 6)
+                    }
+                }
+                .frame(width: 12, height: 14)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(stopping || line.sessionId == nil)
+            .onHover { dotHovering = $0 }
+            .help("Stop this session")
             Button(action: onOpen) {
                 HStack(spacing: 6) {
-                    Circle().fill(line.light.color)
-                        .frame(width: 6, height: 6).frame(width: 10)
                     Text(line.name)
                         .font(.system(size: 11.5 * scale))
                         .strikethrough(stopping)
@@ -760,16 +782,6 @@ struct SessionLineView: View {
             }
             .buttonStyle(.plain)
             .help(line.hasWindow ? "Click to bring its tab forward." : "Not open in a terminal here: click to open it in a new tab.")
-            Button(action: stop) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9 * scale, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .frame(width: 12)
-            }
-            .buttonStyle(.plain)
-            .opacity(hovering && !stopping ? 1 : 0)
-            .disabled(!hovering || stopping || line.sessionId == nil)
-            .help("Stop this session")
         }
         .padding(.leading, inset)
         .padding(.trailing, 4)
