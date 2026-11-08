@@ -114,6 +114,16 @@ enum WezTerm {
         ["cli", "--no-auto-start", "set-tab-title", "--pane-id", String(paneId), title]
     }
 
+    /// The environment the command line runs in: ClaudeHUD's own, without
+    /// `WEZTERM_UNIX_SOCKET` and `WEZTERM_PANE`. ClaudeHUD relaunched from a
+    /// shell in a WezTerm tab inherits that GUI's socket; once the GUI quits,
+    /// every call went to the dead socket, so ClaudeHUD saw no panes, lit
+    /// every session grey and opened no tab (2026-11-08). Without them the
+    /// command line finds the running GUI itself.
+    static func cliEnvironment(_ env: [String: String]) -> [String: String] {
+        env.filter { $0.key != "WEZTERM_UNIX_SOCKET" && $0.key != "WEZTERM_PANE" }
+    }
+
     static func activateTabArgs(tabId: Int) -> [String] {
         ["cli", "--no-auto-start", "activate-tab", "--tab-id", String(tabId)]
     }
@@ -179,6 +189,7 @@ enum WezTerm {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: cliPath)
         p.arguments = args
+        p.environment = cliEnvironment(ProcessInfo.processInfo.environment)
         let out = Pipe()
         p.standardInput = FileHandle.nullDevice
         p.standardOutput = out

@@ -92,4 +92,11 @@ final class WezTermServiceTests: XCTestCase {
         XCTAssertEqual([SessionLight.running, .holding, .attention, .noTab].map(\.name),
                        ["running", "holding", "attention", "no-tab"])
     }
+
+    func testAnInheritedSocketNeverReachesTheCommandLine() {
+        let env = WezTerm.cliEnvironment(["HOME": "/Users/u", "PATH": "/usr/bin",
+                                          "WEZTERM_UNIX_SOCKET": "/Users/u/.local/share/wezterm/gui-sock-3381",
+                                          "WEZTERM_PANE": "8"])
+        XCTAssertEqual(env, ["HOME": "/Users/u", "PATH": "/usr/bin"])
+    }
 }
