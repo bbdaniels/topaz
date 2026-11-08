@@ -242,7 +242,10 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        assert_eq!(keyterms_header(&terms).as_deref(), Some("Topaz,ClaudeHUD,a b"));
+        assert_eq!(
+            keyterms_header(&terms).as_deref(),
+            Some("Topaz,ClaudeHUD,a b")
+        );
         assert_eq!(keyterms_header(&[]), None);
         let long = vec!["x".repeat(600), "y".repeat(500), "z".repeat(10)];
         let header = keyterms_header(&long).unwrap();

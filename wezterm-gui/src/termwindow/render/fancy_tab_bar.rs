@@ -412,13 +412,14 @@ impl crate::TermWindow {
                         ElementContent::Poly { .. } => unreachable!(),
                         ElementContent::Children(mut kids) => {
                             if self.config.show_close_tab_button_in_tabs {
-                                if self.config.tab_close_button_at_title_start && !kids.is_empty()
-                                {
+                                if self.config.tab_close_button_at_title_start && !kids.is_empty() {
                                     let first = kids.remove(0);
                                     let text = kids.first().map(|k| k.colors.text.clone());
                                     kids.insert(
                                         0,
-                                        make_title_start_close_button(first, text, &metrics, tab_idx),
+                                        make_title_start_close_button(
+                                            first, text, &metrics, tab_idx,
+                                        ),
                                     );
                                 } else {
                                     kids.push(make_x_button(

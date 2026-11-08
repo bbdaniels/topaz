@@ -188,9 +188,7 @@ fn run(pane_id: PaneId, keyterms: &[String], commands: Receiver<Command>) -> any
             Ok(_) => {}
             Err(tungstenite::Error::Io(err))
                 if matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
-            Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
-                break
-            }
+            Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => break,
             Err(err) => return Err(err).context("reading the transcript"),
         }
     }
@@ -307,7 +305,10 @@ fn connect_once(keyterms: &[String]) -> anyhow::Result<Socket> {
     let headers = request.headers_mut();
     let header = |s: &str| HeaderValue::from_bytes(s.as_bytes()).context("a request header");
     headers.insert("authorization", header(&format!("Bearer {token}"))?);
-    headers.insert("user-agent", header(&format!("claude-cli/{}", claude_version()))?);
+    headers.insert(
+        "user-agent",
+        header(&format!("claude-cli/{}", claude_version()))?,
+    );
     headers.insert("x-app", header("cli")?);
     headers.insert("anthropic-client-platform", header("claude_code_cli")?);
     if let Some(terms) = keyterms_header(keyterms) {
