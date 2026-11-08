@@ -514,8 +514,9 @@ pub struct Config {
     /// macOS: hold fn (Globe) on its own to dictate into the active pane
     /// with Anthropic's speech to text, the service of Claude Code's /voice,
     /// signed in with Claude Code's login. Words are typed as they are
-    /// recognized; another key during the hold cancels, so fn shortcuts
-    /// keep working.
+    /// recognized; another key from fn down until the last words are typed,
+    /// or switching apps, cancels, so fn shortcuts keep working and nothing
+    /// lands after your own typing.
     #[dynamic(default)]
     pub fn_dictation: bool,
 

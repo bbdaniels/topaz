@@ -15,15 +15,19 @@
 //! The token is read from the Keychain at each use and never kept or logged;
 //! on a 401 it is read once more, since Claude Code refreshes it.
 
+pub mod control;
 pub mod typing;
 
 use anyhow::{anyhow, Context};
+use control::{Command, Session, Shared};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use mux::pane::PaneId;
 use mux::Mux;
 use std::io::ErrorKind;
 use std::net::TcpStream;
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::HeaderValue;
@@ -59,86 +63,115 @@ const CHUNK_SAMPLES: usize = typing::OUTPUT_RATE as usize / 25;
 const POLL: Duration = Duration::from_millis(10);
 /// After CloseStream, how long to wait for the final text.
 const FINAL_WAIT: Duration = Duration::from_secs(3);
+/// How long the Keychain read, DNS, TCP, TLS and the WebSocket handshake may
+/// take together, the read again after a 401 included.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 /// Used in the User-Agent only when Claude Code's versions folder is unreadable.
 const FALLBACK_CLAUDE_VERSION: &str = "2.1.319";
 
-enum Command {
-    Finish,
-    Cancel,
-}
+/// Shows a brief notice in the pane that was active at fn down; called on
+/// the session's thread.
+pub type Notice = Box<dyn Fn(String) + Send>;
 
-/// One hold of fn. Dropping it without finish() cancels it.
-pub struct Session {
-    commands: Sender<Command>,
-}
-
-impl Session {
-    pub fn start(pane_id: PaneId, keyterms: Vec<String>) -> Self {
-        let (commands, receiver) = channel();
-        let spawned = std::thread::Builder::new()
-            .name("fn-dictation".to_string())
-            .spawn(move || {
-                if let Err(err) = run(pane_id, &keyterms, receiver) {
-                    log::error!("fn dictation: {err:#}");
-                }
-            });
-        if let Err(err) = spawned {
-            log::error!("fn dictation: cannot start its thread: {err:#}");
+/// Start a session for one hold of fn. `notice` is used when Claude Code's
+/// sign in is missing, expired or refused, which Ben must fix himself.
+pub fn start(pane_id: PaneId, keyterms: Vec<String>, notice: Notice) -> Session {
+    Session::spawn(move |commands, shared| {
+        if let Err(err) = run(pane_id, &keyterms, &commands, &shared) {
+            log::error!("fn dictation: {err:#}");
+            if let Some(refused) = sign_in_refused(&err) {
+                notice(refused.to_string());
+            }
         }
-        Self { commands }
-    }
+    })
+}
 
-    /// fn was released: send what is left and type the final text.
-    pub fn finish(self) {
-        self.commands.send(Command::Finish).ok();
-    }
+/// Claude Code's sign in is missing, expired or refused: retrying cannot help
+/// until Ben signs in again, so the pane shows it.
+#[derive(Debug)]
+struct SignInRefused(&'static str);
 
-    /// Another key came during the hold, so this was a shortcut: stop
-    /// without typing anything more.
-    pub fn cancel(self) {
-        self.commands.send(Command::Cancel).ok();
+impl std::fmt::Display for SignInRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(self.0)
     }
+}
+
+impl std::error::Error for SignInRefused {}
+
+const NOT_SIGNED_IN: SignInRefused = SignInRefused(
+    "fn dictation needs Claude Code's sign in, and the Keychain has none. \
+     Run claude and sign in with /login, then hold fn again.",
+);
+const TOKEN_REFUSED: SignInRefused = SignInRefused(
+    "fn dictation: the speech to text service refused Claude Code's sign in \
+     (the token has expired or was revoked). Run claude so that it refreshes \
+     it, or sign in again with /login, then hold fn again.",
+);
+
+fn sign_in_refused(err: &anyhow::Error) -> Option<&SignInRefused> {
+    err.downcast_ref::<SignInRefused>()
 }
 
 type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
 
-fn run(pane_id: PaneId, keyterms: &[String], commands: Receiver<Command>) -> anyhow::Result<()> {
+fn run(
+    pane_id: PaneId,
+    keyterms: &[String],
+    commands: &Receiver<Command>,
+    shared: &Shared,
+) -> anyhow::Result<()> {
     // Capture first, so that audio buffers while the socket opens.
     let (audio_tx, audio) = channel::<Vec<f32>>();
     let (stream, input_rate) = start_capture(audio_tx)?;
     let mut stream = Some(stream);
     let mut resampler = Resampler::new(input_rate);
 
-    let mut socket = connect(keyterms)?;
+    let Some((mut socket, mut finish_now)) = connect_in_time(keyterms, commands)? else {
+        return Ok(());
+    };
     set_read_timeout(&socket, POLL)?;
     socket.send(Message::text(KEEP_ALIVE))?;
     let mut last_keep_alive = Instant::now();
 
+    let cancelled = shared.cancel_flag();
     let mut pcm: Vec<i16> = vec![];
     let mut transcript = Transcript::default();
     let mut typed = String::new();
     let mut final_by: Option<Instant> = None;
 
     loop {
-        if final_by.is_none() {
-            match commands.try_recv() {
-                Ok(Command::Finish) => {
-                    // Stop the microphone, send all that it heard, close.
-                    drop(stream.take());
-                    while let Ok(samples) = audio.try_recv() {
-                        resampler.push(&samples, &mut pcm);
-                    }
-                    send_audio(&mut socket, &mut pcm, true)?;
-                    socket.send(Message::text(CLOSE_STREAM))?;
-                    final_by = Some(Instant::now() + FINAL_WAIT);
+        // Commands are read in the final wait too, so that a key Ben types
+        // then stops the dictation before its last edit.
+        let command = if std::mem::take(&mut finish_now) {
+            Ok(Command::Finish)
+        } else {
+            commands.try_recv()
+        };
+        match command {
+            Ok(Command::Cancel) | Err(TryRecvError::Disconnected) => {
+                socket.close(None).ok();
+                return Ok(());
+            }
+            _ if shared.cancelled() => {
+                socket.close(None).ok();
+                return Ok(());
+            }
+            Ok(Command::Finish) if final_by.is_none() => {
+                // Stop the microphone, send all that it heard, close.
+                drop(stream.take());
+                while let Ok(samples) = audio.try_recv() {
+                    resampler.push(&samples, &mut pcm);
                 }
-                Ok(Command::Cancel) | Err(TryRecvError::Disconnected) => {
-                    socket.close(None).ok();
-                    return Ok(());
-                }
-                Err(TryRecvError::Empty) => {
+                send_audio(&mut socket, &mut pcm, true)?;
+                socket.send(Message::text(CLOSE_STREAM))?;
+                final_by = Some(Instant::now() + FINAL_WAIT);
+            }
+            Ok(Command::Finish) => {}
+            Err(TryRecvError::Empty) => match final_by {
+                None => {
                     while let Ok(samples) = audio.try_recv() {
                         resampler.push(&samples, &mut pcm);
                     }
@@ -148,10 +181,12 @@ fn run(pane_id: PaneId, keyterms: &[String], commands: Receiver<Command>) -> any
                         last_keep_alive = Instant::now();
                     }
                 }
-            }
-        } else if final_by.map_or(false, |t| Instant::now() >= t) {
-            log::warn!("fn dictation: no final text within {FINAL_WAIT:?}");
-            break;
+                Some(by) if Instant::now() >= by => {
+                    log::warn!("fn dictation: no final text within {FINAL_WAIT:?}");
+                    break;
+                }
+                Some(_) => {}
+            },
         }
 
         match socket.read() {
@@ -165,19 +200,19 @@ fn run(pane_id: PaneId, keyterms: &[String], commands: Receiver<Command>) -> any
                         if let Some(data) = message.get("data").and_then(|d| d.as_str()) {
                             if !data.is_empty() {
                                 transcript.running(data);
-                                type_into(pane_id, &mut typed, &transcript.text());
+                                type_into(pane_id, &cancelled, &mut typed, &transcript.text());
                             }
                         }
                     }
                     Some("TranscriptEndpoint") => {
                         transcript.endpoint();
-                        type_into(pane_id, &mut typed, &transcript.text());
+                        type_into(pane_id, &cancelled, &mut typed, &transcript.text());
                         if final_by.is_some() {
                             break;
                         }
                     }
                     Some("TranscriptError") | Some("error") => {
-                        type_into(pane_id, &mut typed, &transcript.text());
+                        type_into(pane_id, &cancelled, &mut typed, &transcript.text());
                         socket.close(None).ok();
                         return Err(anyhow!("the service reported {message}"));
                     }
@@ -193,7 +228,7 @@ fn run(pane_id: PaneId, keyterms: &[String], commands: Receiver<Command>) -> any
         }
     }
 
-    type_into(pane_id, &mut typed, &transcript.text());
+    type_into(pane_id, &cancelled, &mut typed, &transcript.text());
     socket.close(None).ok();
     Ok(())
 }
@@ -214,14 +249,20 @@ fn send_audio(socket: &mut Socket, pcm: &mut Vec<i16>, all: bool) -> anyhow::Res
 }
 
 /// Type the difference between what was typed and what is wanted into the
-/// pane, on the GUI thread.
-fn type_into(pane_id: PaneId, typed: &mut String, wanted: &str) {
+/// pane, on the GUI thread, unless the session was cancelled by then: the
+/// flag is checked there, where keys are handled, so no edit lands after the
+/// key that cancelled.
+fn type_into(pane_id: PaneId, cancelled: &Arc<AtomicBool>, typed: &mut String, wanted: &str) {
     let edit = edit_between(typed, wanted);
     if edit.is_empty() {
         return;
     }
     *typed = wanted.to_string();
+    let cancelled = Arc::clone(cancelled);
     promise::spawn::spawn_into_main_thread(async move {
+        if cancelled.load(Ordering::SeqCst) {
+            return;
+        }
         let Some(pane) = Mux::get().get_pane(pane_id) else {
             return;
         };
@@ -281,20 +322,62 @@ fn downmix<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32) -> V
         .collect()
 }
 
-/// Open the socket with Claude Code's login, reading the token again once
-/// on a 401.
-fn connect(keyterms: &[String]) -> anyhow::Result<Socket> {
-    let unauthorized = |err: &anyhow::Error| {
-        matches!(
-            err.downcast_ref::<tungstenite::Error>(),
-            Some(tungstenite::Error::Http(response)) if response.status().as_u16() == 401
-        )
-    };
-    match connect_once(keyterms) {
-        Err(err) if unauthorized(&err) => {
-            log::info!("fn dictation: 401, reading the token again");
-            connect_once(keyterms).context("connecting after a 401")
+/// Open the socket on a thread of its own, so that the whole of it (the
+/// Keychain read, DNS, TCP, TLS, the handshake, the read again after a 401)
+/// is bounded by CONNECT_TIMEOUT, while fn up and cancel are still heard.
+/// None: cancelled meanwhile. The flag: fn was released meanwhile. A
+/// connection that comes too late is dropped by its thread.
+fn connect_in_time(
+    keyterms: &[String],
+    commands: &Receiver<Command>,
+) -> anyhow::Result<Option<(Socket, bool)>> {
+    let (result_tx, result) = channel();
+    let keyterms = keyterms.to_vec();
+    std::thread::Builder::new()
+        .name("fn-dictation-connect".to_string())
+        .spawn(move || {
+            result_tx.send(connect(&keyterms)).ok();
+        })
+        .context("starting the thread that connects")?;
+    let deadline = Instant::now() + CONNECT_TIMEOUT;
+    let mut finished = false;
+    loop {
+        match commands.try_recv() {
+            Ok(Command::Cancel) | Err(TryRecvError::Disconnected) => return Ok(None),
+            Ok(Command::Finish) => finished = true,
+            Err(TryRecvError::Empty) => {}
         }
+        match result.recv_timeout(POLL) {
+            Ok(socket) => return Ok(Some((socket?, finished))),
+            Err(RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
+            Err(RecvTimeoutError::Timeout) => {
+                return Err(anyhow!(
+                    "no connection to the speech to text service within {CONNECT_TIMEOUT:?}"
+                ))
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(anyhow!("the thread that connects ended without a result"))
+            }
+        }
+    }
+}
+
+/// Open the socket with Claude Code's login, reading the token again once
+/// on a 401. A 401 after that, or a 403, means the sign in itself is refused.
+fn connect(keyterms: &[String]) -> anyhow::Result<Socket> {
+    let status = |err: &anyhow::Error| match err.downcast_ref::<tungstenite::Error>() {
+        Some(tungstenite::Error::Http(response)) => Some(response.status().as_u16()),
+        _ => None,
+    };
+    let result = match connect_once(keyterms) {
+        Err(err) if status(&err) == Some(401) => {
+            log::info!("fn dictation: 401, reading the token again");
+            connect_once(keyterms)
+        }
+        other => other,
+    };
+    match result {
+        Err(err) if matches!(status(&err), Some(401 | 403)) => Err(err.context(TOKEN_REFUSED)),
         other => other.context("connecting to the speech to text service"),
     }
 }
@@ -336,9 +419,8 @@ fn access_token() -> anyhow::Result<String> {
         .output()
         .context("running /usr/bin/security")?;
     if !output.status.success() {
-        return Err(anyhow!(
-            "no Keychain item {KEYCHAIN_SERVICE:?}: sign in to Claude Code first"
-        ));
+        log::error!("fn dictation: no Keychain item {KEYCHAIN_SERVICE:?}");
+        return Err(anyhow!(NOT_SIGNED_IN));
     }
     let credentials: serde_json::Value = serde_json::from_slice(&output.stdout)
         .with_context(|| format!("the Keychain item {KEYCHAIN_SERVICE:?} is not JSON"))?;
@@ -347,7 +429,10 @@ fn access_token() -> anyhow::Result<String> {
         .and_then(|t| t.as_str())
         .filter(|t| !t.is_empty())
         .map(str::to_string)
-        .ok_or_else(|| anyhow!("no claudeAiOauth.accessToken in {KEYCHAIN_SERVICE:?}"))
+        .ok_or_else(|| {
+            log::error!("fn dictation: no claudeAiOauth.accessToken in {KEYCHAIN_SERVICE:?}");
+            anyhow!(NOT_SIGNED_IN)
+        })
 }
 
 /// The newest installed Claude Code, for the User-Agent.
@@ -365,4 +450,23 @@ fn claude_version() -> String {
             )
         })
         .unwrap_or_else(|| FALLBACK_CLAUDE_VERSION.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refused_sign_in_is_found_under_its_context() {
+        let err = Err::<(), _>(anyhow!(NOT_SIGNED_IN))
+            .context("connecting to the speech to text service")
+            .unwrap_err();
+        assert_eq!(sign_in_refused(&err).map(|r| r.0), Some(NOT_SIGNED_IN.0));
+
+        let err = anyhow!("a 401").context(TOKEN_REFUSED);
+        assert_eq!(sign_in_refused(&err).map(|r| r.0), Some(TOKEN_REFUSED.0));
+
+        let err = anyhow!("a timeout").context("connecting");
+        assert!(sign_in_refused(&err).is_none());
+    }
 }

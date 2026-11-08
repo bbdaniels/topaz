@@ -1019,6 +1019,51 @@ fn mouse_icon_selector(cursor: CursorIcon) -> Sel {
     }
 }
 
+/// NSEventModifierFlagFunction. key_modifiers() leaves it out, and so must
+/// the fn key's state: arrow, Home, End, Page and function keys carry it too,
+/// so a modifier released while one of them is held shows it in a
+/// flagsChanged event although fn was never touched.
+const FUNCTION_KEY_FLAG: u64 = 1 << 23;
+
+/// The fn (Globe) key's state after a flagsChanged event, from that key's own
+/// events only (kVK_Function): no other key's event changes it. While it is
+/// down, its next event is the release; while it is up, its event is a press
+/// only when the flag agrees, so a release of a press made in another app is
+/// not taken for a press here.
+fn function_key_after(was_down: bool, key_code: u16, function_flag: bool) -> bool {
+    if key_code != kVK_Function {
+        was_down
+    } else if was_down {
+        false
+    } else {
+        function_flag
+    }
+}
+
+#[test]
+fn only_the_fn_key_moves_its_state() {
+    // fn down, fn up.
+    assert!(function_key_after(false, kVK_Function, true));
+    assert!(!function_key_after(true, kVK_Function, false));
+
+    // Option held, an arrow pressed, Option released first: the event is
+    // Option's, with the function flag set by the arrow. Not fn.
+    assert!(!function_key_after(false, kVK_Option, true));
+    assert!(!function_key_after(false, kVK_RightOption, true));
+    assert!(!function_key_after(false, kVK_Command, true));
+    // Nor does the next modifier change end a press that is real.
+    assert!(function_key_after(true, kVK_Shift, false));
+    assert!(function_key_after(true, kVK_Command, true));
+
+    // fn released while an arrow is still held keeps the flag set: still
+    // the release.
+    assert!(!function_key_after(true, kVK_Function, true));
+
+    // Pressed in another app, released here after focus moved (the state
+    // was reset to up on focus loss): not a press.
+    assert!(!function_key_after(false, kVK_Function, false));
+}
+
 #[test]
 fn cursor_icons_use_macos_cursors() {
     assert_eq!(
@@ -1626,8 +1671,8 @@ struct Inner {
     /// First in a dead-key sequence
     dead_pending: Option<DeadKeyState>,
 
-    /// Whether the fn (Globe) key is down, from the flags of the last
-    /// flagsChanged event, so that each change is reported once
+    /// Whether the fn (Globe) key is down, from that key's own flagsChanged
+    /// events (function_key_after); false again when the window loses focus
     function_key_down: bool,
 
     /// When using simple fullscreen mode, this tracks
@@ -2333,10 +2378,12 @@ impl WindowView {
 
     extern "C" fn did_resign_key(this: &mut Object, _sel: Sel, _id: id) {
         if let Some(this) = Self::get_this(this) {
-            this.inner
-                .borrow_mut()
-                .events
-                .dispatch(WindowEvent::FocusChanged(false));
+            let mut inner = this.inner.borrow_mut();
+            // fn's release now goes to the newly focused app; forget the
+            // press, so that the next one here is seen as a press.
+            inner.function_key_down = false;
+            inner.events.dispatch(WindowEvent::FocusChanged(false));
+            drop(inner);
             this.update_application_presentation(true);
         }
     }
@@ -2946,17 +2993,16 @@ impl WindowView {
             KeyboardLedStatus::empty()
         };
 
-        // NSEventModifierFlagFunction: key_modifiers() leaves it out, as
-        // arrow and function keys carry it too; here, in flagsChanged, it
-        // changes only when the fn (Globe) key itself goes down or up.
-        const FUNCTION_KEY_FLAG: u64 = 1 << 23;
-        let function_key_down = modifier_flags.bits() & FUNCTION_KEY_FLAG != 0;
+        let key_code = unsafe { nsevent.keyCode() };
+        let function_flag = modifier_flags.bits() & FUNCTION_KEY_FLAG != 0;
 
         if let Some(myself) = Self::get_this(this) {
             let mut inner = myself.inner.borrow_mut();
             inner
                 .events
                 .dispatch(WindowEvent::AdviseModifiersLedStatus(modifiers, leds));
+            let function_key_down =
+                function_key_after(inner.function_key_down, key_code, function_flag);
             if function_key_down != inner.function_key_down {
                 inner.function_key_down = function_key_down;
                 inner
