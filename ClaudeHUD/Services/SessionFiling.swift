@@ -159,10 +159,6 @@ struct ClaudeSessionRecord: Equatable {
     /// The tmux pane the session runs in, as "<session>:@<window>.%<pane>",
     /// when it runs in one (the iMac's pi-gate sessions do).
     var tmux: String? = nil
-    /// The command that attaches a terminal to that tmux session, as the
-    /// iMac's gate reports it (`live`): on the gate's own tmux server for a
-    /// session it launched or adopted, else on the default server.
-    var attach: String? = nil
     /// Set by the iMac's gate (`live`) on a session that is a service, not
     /// Ben's work: "duet", the runner's Duet session, which systemd starts
     /// again whenever it ends (2026-11-06). ClaudeHUD lists no such session
@@ -217,7 +213,7 @@ enum ClaudeSessionRecords {
             bridgeSessionId: string("bridgeSessionId"), jobId: string("jobId"),
             status: string("status"), waitingFor: string("waitingFor"),
             startedAt: millis("startedAt"), updatedAt: millis("updatedAt"),
-            procStart: string("procStart"), tmux: string("tmux"), attach: string("attach"),
+            procStart: string("procStart"), tmux: string("tmux"),
             service: string("service"))
     }
 

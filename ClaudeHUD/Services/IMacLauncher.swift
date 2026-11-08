@@ -44,7 +44,6 @@ enum IMacLauncher {
     struct Answer: Equatable {
         var started: Bool
         var session: String
-        var attach: String
         var dir: String?
     }
 
@@ -194,10 +193,10 @@ enum IMacLauncher {
             if error == folderMissing || error == transcriptMissing { return .notOnIMac(error) }
             return .failed(error)
         }
-        guard let session = obj["session"] as? String, let attach = obj["attach"] as? String else {
+        guard let session = obj["session"] as? String else {
             return .failed("the iMac's launcher did not name the session")
         }
-        return .running(Answer(started: obj["started"] as? Bool ?? false, session: session, attach: attach,
+        return .running(Answer(started: obj["started"] as? Bool ?? false, session: session,
                                dir: obj["dir"] as? String))
     }
 
