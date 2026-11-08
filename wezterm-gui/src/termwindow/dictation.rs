@@ -10,9 +10,11 @@ impl super::TermWindow {
     pub fn function_key_changed(&mut self, down: bool) {
         #[cfg(target_os = "macos")]
         {
+            let pressed = std::time::Instant::now();
             if !down {
                 self.fn_dictation.fn_up();
             } else if self.config.fn_dictation {
+                log::info!("fn dictation timing: +0 ms fn press received");
                 let Some(pane) = self.get_active_pane_or_overlay() else {
                     return;
                 };
@@ -30,7 +32,7 @@ impl super::TermWindow {
                             )));
                         }
                     });
-                    Some(crate::dictation::start(pane_id, keyterms, notice))
+                    Some(crate::dictation::start(pane_id, keyterms, notice, pressed))
                 });
             }
         }

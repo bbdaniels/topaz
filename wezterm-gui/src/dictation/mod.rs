@@ -19,15 +19,15 @@ pub mod control;
 pub mod typing;
 
 use anyhow::{anyhow, Context};
-use control::{Command, Session, Shared};
+use control::{Command, Session, Shared, Timing};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use mux::pane::PaneId;
 use mux::Mux;
 use std::io::ErrorKind;
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::HeaderValue;
@@ -75,14 +75,19 @@ const FALLBACK_CLAUDE_VERSION: &str = "2.1.319";
 /// the session's thread.
 pub type Notice = Box<dyn Fn(String) + Send>;
 
-/// Start a session for one hold of fn. `notice` is used when Claude Code's
-/// sign in is missing, expired or refused, which Ben must fix himself.
-pub fn start(pane_id: PaneId, keyterms: Vec<String>, notice: Notice) -> Session {
-    Session::spawn(move |commands, shared| {
-        if let Err(err) = run(pane_id, &keyterms, &commands, &shared) {
-            log::error!("fn dictation: {err:#}");
-            if let Some(refused) = sign_in_refused(&err) {
-                notice(refused.to_string());
+/// Start a session for one hold of fn, pressed at `pressed`. `notice` is
+/// used when Claude Code's sign in is missing, expired or refused, which Ben
+/// must fix himself.
+pub fn start(pane_id: PaneId, keyterms: Vec<String>, notice: Notice, pressed: Instant) -> Session {
+    Session::spawn(pressed, move |commands, shared| {
+        match run(pane_id, &keyterms, &commands, &shared) {
+            Ok(end) => shared.timing.log(format_args!("session end ({end})")),
+            Err(err) => {
+                shared.timing.log(format_args!("session end (error)"));
+                log::error!("fn dictation: {err:#}");
+                if let Some(refused) = sign_in_refused(&err) {
+                    notice(refused.to_string());
+                }
             }
         }
     })
@@ -117,21 +122,47 @@ fn sign_in_refused(err: &anyhow::Error) -> Option<&SignInRefused> {
 
 type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
 
+/// Milliseconds of audio in `samples` samples at the rate sent.
+fn audio_ms(samples: usize) -> usize {
+    samples * 1000 / typing::OUTPUT_RATE as usize
+}
+
+/// How a session ended, for its timing line.
+type End = &'static str;
+
 fn run(
     pane_id: PaneId,
     keyterms: &[String],
     commands: &Receiver<Command>,
     shared: &Shared,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<End> {
+    let timing = &shared.timing;
     // Capture first, so that audio buffers while the socket opens.
     let (audio_tx, audio) = channel::<Vec<f32>>();
-    let (stream, input_rate) = start_capture(audio_tx)?;
+    let first_buffer = Arc::new(OnceLock::new());
+    let (stream, input_rate) = start_capture(audio_tx, Arc::clone(&first_buffer), timing)?;
     let mut stream = Some(stream);
     let mut resampler = Resampler::new(input_rate);
-
-    let Some((mut socket, mut finish_now)) = connect_in_time(keyterms, commands)? else {
-        return Ok(());
+    let mut first_buffer_logged = false;
+    let log_first_buffer = |logged: &mut bool| {
+        if !*logged {
+            if let Some(&(at, frames)) = first_buffer.get() {
+                *logged = true;
+                log::info!(
+                    "fn dictation timing: +{} ms first audio buffer received \
+                     ({frames} frames, {} ms at {input_rate} Hz; logged at +{} ms)",
+                    timing.ms_at(at),
+                    frames as u64 * 1000 / input_rate.max(1) as u64,
+                    timing.ms()
+                );
+            }
+        }
     };
+
+    let Some((mut socket, mut finish_now)) = connect_in_time(keyterms, commands, timing)? else {
+        return Ok("cancelled while connecting");
+    };
+    log_first_buffer(&mut first_buffer_logged);
     set_read_timeout(&socket, POLL)?;
     socket.send(Message::text(KEEP_ALIVE))?;
     let mut last_keep_alive = Instant::now();
@@ -141,6 +172,13 @@ fn run(
     let mut transcript = Transcript::default();
     let mut typed = String::new();
     let mut final_by: Option<Instant> = None;
+    // For the timing lines: audio sent, messages received, edits typed.
+    let mut sent_samples = 0;
+    let mut messages = 0;
+    let mut first_interim = true;
+    let mut first_text = true;
+    let mut last_text_at: Option<Instant> = None;
+    let end: End;
 
     loop {
         // Commands are read in the final wait too, so that a key Ben types
@@ -153,11 +191,11 @@ fn run(
         match command {
             Ok(Command::Cancel) | Err(TryRecvError::Disconnected) => {
                 socket.close(None).ok();
-                return Ok(());
+                return Ok("cancelled");
             }
             _ if shared.cancelled() => {
                 socket.close(None).ok();
-                return Ok(());
+                return Ok("cancelled");
             }
             Ok(Command::Finish) if final_by.is_none() => {
                 // Stop the microphone, send all that it heard, close.
@@ -165,8 +203,14 @@ fn run(
                 while let Ok(samples) = audio.try_recv() {
                     resampler.push(&samples, &mut pcm);
                 }
-                send_audio(&mut socket, &mut pcm, true)?;
+                let tail = send_audio(&mut socket, &mut pcm, true)?;
+                sent_samples += tail;
                 socket.send(Message::text(CLOSE_STREAM))?;
+                timing.log(format_args!(
+                    "CloseStream sent (last {} ms of audio with it, {} ms sent in all)",
+                    audio_ms(tail),
+                    audio_ms(sent_samples)
+                ));
                 final_by = Some(Instant::now() + FINAL_WAIT);
             }
             Ok(Command::Finish) => {}
@@ -175,7 +219,17 @@ fn run(
                     while let Ok(samples) = audio.try_recv() {
                         resampler.push(&samples, &mut pcm);
                     }
-                    send_audio(&mut socket, &mut pcm, false)?;
+                    log_first_buffer(&mut first_buffer_logged);
+                    let sent = send_audio(&mut socket, &mut pcm, false)?;
+                    if sent > 0 && sent_samples == 0 {
+                        timing.log(format_args!(
+                            "first audio chunk sent (flushed {} ms of buffered audio \
+                             in {} chunks at once)",
+                            audio_ms(sent),
+                            sent.div_ceil(CHUNK_SAMPLES)
+                        ));
+                    }
+                    sent_samples += sent;
                     if last_keep_alive.elapsed() >= KEEP_ALIVE_EVERY {
                         socket.send(Message::text(KEEP_ALIVE))?;
                         last_keep_alive = Instant::now();
@@ -183,6 +237,7 @@ fn run(
                 }
                 Some(by) if Instant::now() >= by => {
                     log::warn!("fn dictation: no final text within {FINAL_WAIT:?}");
+                    end = "no final text in time";
                     break;
                 }
                 Some(_) => {}
@@ -195,46 +250,91 @@ fn run(
                     Ok(v) => v,
                     Err(_) => continue,
                 };
-                match message.get("type").and_then(|t| t.as_str()) {
-                    Some("TranscriptText") | Some("TranscriptInterim") => {
-                        if let Some(data) = message.get("data").and_then(|d| d.as_str()) {
+                let kind = message.get("type").and_then(|t| t.as_str());
+                messages += 1;
+                match kind {
+                    Some(kind @ ("TranscriptText" | "TranscriptInterim")) => {
+                        let data = message.get("data").and_then(|d| d.as_str());
+                        let chars = data.map_or(0, |d| d.chars().count());
+                        let first = if kind == "TranscriptText" {
+                            last_text_at = Some(Instant::now());
+                            std::mem::take(&mut first_text)
+                        } else {
+                            std::mem::take(&mut first_interim)
+                        };
+                        if first || final_by.is_some() {
+                            timing.log(format_args!(
+                                "{} {kind} received ({chars} chars; {} ms of audio sent)",
+                                if final_by.is_some() {
+                                    "after CloseStream,"
+                                } else {
+                                    "first"
+                                },
+                                audio_ms(sent_samples)
+                            ));
+                        }
+                        if let Some(data) = data {
                             if !data.is_empty() {
                                 transcript.running(data);
-                                type_into(pane_id, &cancelled, &mut typed, &transcript.text());
+                                type_into(
+                                    pane_id,
+                                    &cancelled,
+                                    &mut typed,
+                                    &transcript.text(),
+                                    timing,
+                                );
                             }
                         }
                     }
                     Some("TranscriptEndpoint") => {
                         transcript.endpoint();
-                        type_into(pane_id, &cancelled, &mut typed, &transcript.text());
+                        type_into(pane_id, &cancelled, &mut typed, &transcript.text(), timing);
                         if final_by.is_some() {
+                            timing.log(format_args!(
+                                "TranscriptEndpoint after CloseStream received"
+                            ));
+                            end = "final endpoint";
                             break;
                         }
                     }
                     Some("TranscriptError") | Some("error") => {
-                        type_into(pane_id, &cancelled, &mut typed, &transcript.text());
+                        type_into(pane_id, &cancelled, &mut typed, &transcript.text(), timing);
                         socket.close(None).ok();
                         return Err(anyhow!("the service reported {message}"));
                     }
                     _ => {}
                 }
             }
-            Ok(Message::Close(_)) => break,
+            Ok(Message::Close(_)) => {
+                end = "the service closed";
+                break;
+            }
             Ok(_) => {}
             Err(tungstenite::Error::Io(err))
                 if matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
-            Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => break,
+            Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
+                end = "the connection closed";
+                break;
+            }
             Err(err) => return Err(err).context("reading the transcript"),
         }
     }
 
-    type_into(pane_id, &cancelled, &mut typed, &transcript.text());
+    type_into(pane_id, &cancelled, &mut typed, &transcript.text(), timing);
     socket.close(None).ok();
-    Ok(())
+    log::info!(
+        "fn dictation timing: last TranscriptText was at +{} ms; {messages} messages, \
+         {} ms of audio sent, {} chars typed",
+        last_text_at.map_or(0, |at| timing.ms_at(at)),
+        audio_ms(sent_samples),
+        typed.chars().count()
+    );
+    Ok(end)
 }
 
-/// Send the buffered audio in whole chunks, and the remainder too when `all`.
-fn send_audio(socket: &mut Socket, pcm: &mut Vec<i16>, all: bool) -> anyhow::Result<()> {
+/// Send the buffered audio in whole chunks, and the remainder too when `all`;
+/// how many samples went.
+fn send_audio(socket: &mut Socket, pcm: &mut Vec<i16>, all: bool) -> anyhow::Result<usize> {
     let whole = if all {
         pcm.len()
     } else {
@@ -245,20 +345,28 @@ fn send_audio(socket: &mut Socket, pcm: &mut Vec<i16>, all: bool) -> anyhow::Res
         socket.send(Message::binary(bytes))?;
     }
     pcm.drain(..whole);
-    Ok(())
+    Ok(whole)
 }
 
 /// Type the difference between what was typed and what is wanted into the
 /// pane, on the GUI thread, unless the session was cancelled by then: the
 /// flag is checked there, where keys are handled, so no edit lands after the
 /// key that cancelled.
-fn type_into(pane_id: PaneId, cancelled: &Arc<AtomicBool>, typed: &mut String, wanted: &str) {
+fn type_into(
+    pane_id: PaneId,
+    cancelled: &Arc<AtomicBool>,
+    typed: &mut String,
+    wanted: &str,
+    timing: &Timing,
+) {
     let edit = edit_between(typed, wanted);
     if edit.is_empty() {
         return;
     }
     *typed = wanted.to_string();
     let cancelled = Arc::clone(cancelled);
+    let timing = timing.clone();
+    let queued = Instant::now();
     promise::spawn::spawn_into_main_thread(async move {
         if cancelled.load(Ordering::SeqCst) {
             return;
@@ -266,6 +374,14 @@ fn type_into(pane_id: PaneId, cancelled: &Arc<AtomicBool>, typed: &mut String, w
         let Some(pane) = Mux::get().get_pane(pane_id) else {
             return;
         };
+        if timing.first_typed() {
+            timing.log(format_args!(
+                "first text typed into the pane ({} chars, {} backspaces; queued at +{} ms)",
+                edit.text.chars().count(),
+                edit.backspaces,
+                timing.ms_at(queued)
+            ));
+        }
         for _ in 0..edit.backspaces {
             pane.key_down(KeyCode::Backspace, KeyModifiers::NONE).ok();
         }
@@ -278,8 +394,16 @@ fn type_into(pane_id: PaneId, cancelled: &Arc<AtomicBool>, typed: &mut String, w
     .detach();
 }
 
-/// The default input device, downmixed to mono f32 at its own rate.
-fn start_capture(audio: Sender<Vec<f32>>) -> anyhow::Result<(cpal::Stream, u32)> {
+/// When the first audio buffer arrived, and its frames.
+type FirstBuffer = Arc<OnceLock<(Instant, usize)>>;
+
+/// The default input device, downmixed to mono f32 at its own rate. The
+/// callback only notes its first buffer in `first`; the session thread logs it.
+fn start_capture(
+    audio: Sender<Vec<f32>>,
+    first: FirstBuffer,
+    timing: &Timing,
+) -> anyhow::Result<(cpal::Stream, u32)> {
     let device = cpal::default_host()
         .default_input_device()
         .ok_or_else(|| anyhow!("no microphone"))?;
@@ -294,6 +418,7 @@ fn start_capture(audio: Sender<Vec<f32>>) -> anyhow::Result<(cpal::Stream, u32)>
         cpal::SampleFormat::F32 => device.build_input_stream(
             &config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                first.get_or_init(|| (Instant::now(), data.len() / channels));
                 audio.send(downmix(data, channels, |s| s)).ok();
             },
             on_error,
@@ -302,6 +427,7 @@ fn start_capture(audio: Sender<Vec<f32>>) -> anyhow::Result<(cpal::Stream, u32)>
         cpal::SampleFormat::I16 => device.build_input_stream(
             &config,
             move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                first.get_or_init(|| (Instant::now(), data.len() / channels));
                 audio
                     .send(downmix(data, channels, |s| s as f32 / i16::MAX as f32))
                     .ok();
@@ -313,6 +439,16 @@ fn start_capture(audio: Sender<Vec<f32>>) -> anyhow::Result<(cpal::Stream, u32)>
     }
     .context("opening the microphone")?;
     stream.play().context("starting the microphone")?;
+    timing.log(format_args!(
+        "mic stream started ({} Hz, {channels} channels, {format:?}, buffer {:?}; \
+         sent as {} Hz mono in chunks of {CHUNK_SAMPLES} samples, {} ms, \
+         polled every {} ms)",
+        config.sample_rate,
+        config.buffer_size,
+        typing::OUTPUT_RATE,
+        audio_ms(CHUNK_SAMPLES),
+        POLL.as_millis()
+    ));
     Ok((stream, config.sample_rate))
 }
 
@@ -330,13 +466,15 @@ fn downmix<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32) -> V
 fn connect_in_time(
     keyterms: &[String],
     commands: &Receiver<Command>,
+    timing: &Timing,
 ) -> anyhow::Result<Option<(Socket, bool)>> {
     let (result_tx, result) = channel();
     let keyterms = keyterms.to_vec();
+    let connect_timing = timing.clone();
     std::thread::Builder::new()
         .name("fn-dictation-connect".to_string())
         .spawn(move || {
-            result_tx.send(connect(&keyterms)).ok();
+            result_tx.send(connect(&keyterms, &connect_timing)).ok();
         })
         .context("starting the thread that connects")?;
     let deadline = Instant::now() + CONNECT_TIMEOUT;
@@ -364,15 +502,15 @@ fn connect_in_time(
 
 /// Open the socket with Claude Code's login, reading the token again once
 /// on a 401. A 401 after that, or a 403, means the sign in itself is refused.
-fn connect(keyterms: &[String]) -> anyhow::Result<Socket> {
+fn connect(keyterms: &[String], timing: &Timing) -> anyhow::Result<Socket> {
     let status = |err: &anyhow::Error| match err.downcast_ref::<tungstenite::Error>() {
         Some(tungstenite::Error::Http(response)) => Some(response.status().as_u16()),
         _ => None,
     };
-    let result = match connect_once(keyterms) {
+    let result = match connect_once(keyterms, timing) {
         Err(err) if status(&err) == Some(401) => {
             log::info!("fn dictation: 401, reading the token again");
-            connect_once(keyterms)
+            connect_once(keyterms, timing)
         }
         other => other,
     };
@@ -382,8 +520,15 @@ fn connect(keyterms: &[String]) -> anyhow::Result<Socket> {
     }
 }
 
-fn connect_once(keyterms: &[String]) -> anyhow::Result<Socket> {
+/// What tungstenite::connect does (less its redirects, which the service
+/// never sends), in steps, so that each is timed.
+fn connect_once(keyterms: &[String], timing: &Timing) -> anyhow::Result<Socket> {
+    let started = Instant::now();
     let token = access_token()?;
+    timing.log(format_args!(
+        "Keychain token read (took {} ms)",
+        started.elapsed().as_millis()
+    ));
     let mut request = service_url().into_client_request()?;
     let headers = request.headers_mut();
     let header = |s: &str| HeaderValue::from_bytes(s.as_bytes()).context("a request header");
@@ -397,7 +542,37 @@ fn connect_once(keyterms: &[String]) -> anyhow::Result<Socket> {
     if let Some(terms) = keyterms_header(keyterms) {
         headers.insert("x-config-keyterms", header(&terms)?);
     }
-    let (socket, _response) = tungstenite::connect(request)?;
+    let host = request
+        .uri()
+        .host()
+        .ok_or_else(|| anyhow!("the service URL has no host"))?
+        .to_string();
+    let port = request.uri().port_u16().unwrap_or(443);
+
+    let dns = Instant::now();
+    let addrs: Vec<SocketAddr> = (host.as_str(), port)
+        .to_socket_addrs()
+        .with_context(|| format!("resolving {host}"))?
+        .collect();
+    let tcp = Instant::now();
+    let stream = addrs
+        .iter()
+        .find_map(|addr| TcpStream::connect(addr).ok())
+        .ok_or_else(|| anyhow!("cannot reach {host}:{port}"))?;
+    stream.set_nodelay(true)?;
+    let handshake = Instant::now();
+    let (socket, _response) =
+        tungstenite::client_tls(request, stream).map_err(|err| match err {
+            tungstenite::HandshakeError::Failure(err) => anyhow::Error::from(err),
+            tungstenite::HandshakeError::Interrupted(_) => anyhow!("the handshake was interrupted"),
+        })?;
+    let done = Instant::now();
+    timing.log(format_args!(
+        "WebSocket connected (DNS {} ms, TCP {} ms, TLS and WebSocket handshake {} ms)",
+        (tcp - dns).as_millis(),
+        (handshake - tcp).as_millis(),
+        (done - handshake).as_millis()
+    ));
     Ok(socket)
 }
 

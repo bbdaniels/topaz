@@ -12,6 +12,44 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
+use std::time::Instant;
+
+/// Timing of one dictation, every line relative to the fn press, to find
+/// where the lag sits: `fn dictation timing: +<ms> ms <event>`. Counts and
+/// lengths only; never the token or the words.
+#[derive(Clone)]
+pub struct Timing {
+    pressed: Instant,
+    typed: Arc<AtomicBool>,
+}
+
+impl Timing {
+    pub fn new(pressed: Instant) -> Self {
+        Self {
+            pressed,
+            typed: Arc::default(),
+        }
+    }
+
+    /// Milliseconds since the fn press.
+    pub fn ms(&self) -> u128 {
+        self.pressed.elapsed().as_millis()
+    }
+
+    /// Milliseconds from the fn press to `at`.
+    pub fn ms_at(&self, at: Instant) -> u128 {
+        at.saturating_duration_since(self.pressed).as_millis()
+    }
+
+    pub fn log(&self, event: std::fmt::Arguments) {
+        log::info!("fn dictation timing: +{} ms {event}", self.ms());
+    }
+
+    /// True the first time only: the first text typed into the pane.
+    pub fn first_typed(&self) -> bool {
+        !self.typed.swap(true, Ordering::SeqCst)
+    }
+}
 
 pub enum Command {
     /// fn was released: stop listening and type the final text.
@@ -21,10 +59,11 @@ pub enum Command {
 }
 
 /// What the window and a session's thread share.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Shared {
     cancelled: Arc<AtomicBool>,
     ended: Arc<AtomicBool>,
+    pub timing: Timing,
 }
 
 impl Shared {
@@ -59,10 +98,18 @@ pub struct Session {
 }
 
 impl Session {
-    /// Run `work` on its own thread with the commands this handle sends.
-    pub fn spawn(work: impl FnOnce(Receiver<Command>, Shared) + Send + 'static) -> Self {
+    /// Run `work` on its own thread with the commands this handle sends;
+    /// `pressed` is the fn press, which its timing is measured from.
+    pub fn spawn(
+        pressed: Instant,
+        work: impl FnOnce(Receiver<Command>, Shared) + Send + 'static,
+    ) -> Self {
         let (commands, receiver) = channel();
-        let shared = Shared::default();
+        let shared = Shared {
+            cancelled: Arc::default(),
+            ended: Arc::default(),
+            timing: Timing::new(pressed),
+        };
         let thread_shared = shared.clone();
         let spawned = std::thread::Builder::new()
             .name("fn-dictation".to_string())
@@ -87,6 +134,7 @@ impl Session {
     pub fn finish(&mut self) {
         if !self.finished {
             self.finished = true;
+            self.shared.timing.log(format_args!("fn released"));
             self.commands.send(Command::Finish).ok();
         }
     }
@@ -158,7 +206,7 @@ mod tests {
     /// A session whose thread reports each command it receives and runs
     /// until it is cancelled or its handle is dropped.
     fn recording_session(seen: Sender<&'static str>) -> Session {
-        Session::spawn(move |commands, _shared| loop {
+        Session::spawn(std::time::Instant::now(), move |commands, _shared| loop {
             match commands.recv() {
                 Ok(Command::Finish) => {
                     seen.send("finish").ok();
@@ -233,14 +281,22 @@ mod tests {
     #[test]
     fn a_new_session_starts_once_the_last_has_ended() {
         let mut dictation = Dictation::default();
-        dictation.fn_down(|| Some(Session::spawn(|_commands, _shared| {})));
+        dictation.fn_down(|| {
+            Some(Session::spawn(
+                std::time::Instant::now(),
+                |_commands, _shared| {},
+            ))
+        });
         wait_until_ended(dictation.session.as_ref().unwrap());
         dictation.fn_up();
 
         let mut started_again = false;
         dictation.fn_down(|| {
             started_again = true;
-            Some(Session::spawn(|_commands, _shared| {}))
+            Some(Session::spawn(
+                std::time::Instant::now(),
+                |_commands, _shared| {},
+            ))
         });
         assert!(started_again);
     }
