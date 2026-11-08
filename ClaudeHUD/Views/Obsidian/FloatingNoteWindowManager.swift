@@ -48,6 +48,12 @@ class FloatingNoteWindowManager: ObservableObject {
         window.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.95)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        // No close, minimize or zoom buttons (Ben, 2026-11-08): a note closes with Cmd-W.
+        // Hidden rather than dropped from the style mask, so .closable keeps
+        // Cmd-W and .titled keeps the drag strip at the top.
+        for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            window.standardWindowButton(kind)?.isHidden = true
+        }
         window.isMovableByWindowBackground = true
 
         NotificationCenter.default.addObserver(

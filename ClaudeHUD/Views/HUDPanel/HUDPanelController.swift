@@ -52,6 +52,13 @@ class HUDPanelController {
         panel.backgroundColor = NSColor.windowBackgroundColor
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden
+        // No close, minimize or zoom buttons (Ben, 2026-11-08): the panel opens and closes
+        // from the menu-bar icon and the hotkey.
+        // Hidden rather than dropped from the style mask, so .closable keeps
+        // Cmd-W and .titled keeps the drag strip at the top.
+        for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            panel.standardWindowButton(kind)?.isHidden = true
+        }
         // Was true ("drag anywhere to move the window"), but AppKit's
         // move-by-background tracking consumes mouse-drag sequences over the
         // SwiftUI content before any in-content gesture or system drag sees them
