@@ -311,7 +311,8 @@ final class VaultWatchTests: XCTestCase {
         ## Completed
         - [ ] Not active
         """)
-        XCTAssertEqual(p.openTasks, ["**First**: do it", "Second"])
+        // A flat task's title, as the daily note listed it before the move.
+        XCTAssertEqual(p.openTasks, ["First", "Second"])
     }
 
     func testTheDailyNoteListsOpenTasksByProjectName() {
