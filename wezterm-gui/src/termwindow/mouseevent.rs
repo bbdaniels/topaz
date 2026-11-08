@@ -91,6 +91,8 @@ impl super::TermWindow {
             .sub((padding_left + border.left.get() as f32) as isize)
             .max(0) as f32)
             / self.render_metrics.cell_size.width as f32;
+        // The cell under the pointer, unrounded, for the image preview
+        let image_hover_column = x.trunc() as usize;
         let x = if !pane.is_mouse_grabbed() {
             // Round the x coordinate so that we're a bit more forgiving of
             // the horizontal position when selecting cells
@@ -216,6 +218,12 @@ impl super::TermWindow {
             None
         };
 
+        if ui_item.is_some() {
+            self.clear_image_preview_hover(context);
+        } else if matches!(self.current_mouse_capture, None) {
+            self.update_image_preview_hover(image_hover_column, y, context);
+        }
+
         if let Some(item) = ui_item.clone() {
             if capture_mouse {
                 self.current_mouse_capture = Some(MouseCapture::UI);
@@ -246,6 +254,7 @@ impl super::TermWindow {
 
     pub fn mouse_leave_impl(&mut self, context: &dyn WindowOps) {
         self.current_mouse_event = None;
+        self.clear_image_preview_hover(context);
         self.update_title();
         context.set_cursor(Some(CursorIcon::Default));
         context.invalidate();
