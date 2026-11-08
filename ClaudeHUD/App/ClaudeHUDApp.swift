@@ -38,13 +38,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     /// "Hide Other Menu Bar Items": macOS 27's allow-list, held while on.
     private let menuBarHiding = MenuBarHiding()
+    /// Watches Topaz, the app that launched this one, while it runs.
+    private var topazWatch: DispatchSourceProcess?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // A regular app, with a Dock icon and a Cmd-Tab entry (Ben, 2026-11-06).
-        // As a menu bar (.accessory) app it was never in the order macOS follows
-        // when the front app quits, so closing a session's terminal window brought
-        // Arc forward over the panel and it looked as if it had hidden itself.
-        NSApp.setActivationPolicy(.regular)
+        // A helper inside Topaz.app (LSUIElement, 2026-11-08): no Dock icon, no
+        // Cmd-Tab entry and no Quit item; Topaz launches it, relaunches it if it
+        // exits and ends it when Topaz quits. Launched by Topaz, it is given
+        // TOPAZ_PID and exits when that process does, so it never outlives it.
+        if let pid = ParentWatch.parentPid(ProcessInfo.processInfo.environment) {
+            topazWatch = ParentWatch.watch(pid) { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.tearDown()
+                    exit(0)
+                }
+            }
+        }
 
         panelController = HUDPanelController(appState: appState)
         setupStatusItem()
@@ -57,12 +66,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             await appState.setup()
         }
-    }
-
-    /// A Dock click brings the panel forward, as it would any app's window.
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        panelController?.show()
-        return false
     }
 
     private func setupStatusItem() {
@@ -132,8 +135,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let footer = NSMenuItem(title: processFooter, action: nil, keyEquivalent: "")
         footer.isEnabled = false
         menu.addItem(footer)
-
-        menu.addItem(withTitle: "Quit ClaudeHUD", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         statusItem?.menu = menu
         statusItem?.button?.performClick(nil)
@@ -307,8 +308,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        appState.hotkeyService.unregister()
+        tearDown()
+    }
+
+    /// Releases what outlives a dead process: the lock screen comes down
+    /// first, so a quit never leaves it covering the display.
+    private func tearDown() {
         appState.screenCoverService.forceUncover()
+        appState.hotkeyService.unregister()
         menuBarHiding.release()
     }
 }

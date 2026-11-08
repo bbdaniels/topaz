@@ -53,6 +53,7 @@ targets:
       - path: ClaudeHUD/Services/WezTermService.swift
       - path: ClaudeHUD/Services/RemoteControlReload.swift
       - path: ClaudeHUD/Services/MenuBarHiding.swift
+      - path: ClaudeHUD/Services/ParentWatch.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.claudehud.tests
