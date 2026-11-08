@@ -1,0 +1,14 @@
+{
+  "images" : [
+    { "filename" : "menubar-listening.png", "idiom" : "universal", "scale" : "1x" },
+    { "filename" : "menubar-listening@2x.png", "idiom" : "universal", "scale" : "2x" },
+    { "filename" : "menubar-listening@3x.png", "idiom" : "universal", "scale" : "3x" }
+  ],
+  "info" : {
+    "author" : "xcode",
+    "version" : 1
+  },
+  "properties" : {
+    "template-rendering-intent" : "original"
+  }
+}

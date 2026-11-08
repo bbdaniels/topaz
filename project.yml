@@ -54,6 +54,7 @@ targets:
       - path: ClaudeHUD/Services/RemoteControlReload.swift
       - path: ClaudeHUD/Services/MenuBarHiding.swift
       - path: ClaudeHUD/Services/ParentWatch.swift
+      - path: ClaudeHUD/Services/DictationLight.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.claudehud.tests

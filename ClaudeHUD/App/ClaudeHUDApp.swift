@@ -1,5 +1,8 @@
 import SwiftUI
 import Cocoa
+import os
+
+private let logger = Logger(subsystem: "com.claudehud", category: "MenuBar")
 
 @main
 struct ClaudeHUDApp: App {
@@ -40,6 +43,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let menuBarHiding = MenuBarHiding()
     /// Watches Topaz, the app that launched this one, while it runs.
     private var topazWatch: DispatchSourceProcess?
+    /// Turns the gem blue while Topaz's fn dictation is listening.
+    private var dictationWatch: DictationWatch?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // A helper inside Topaz.app (LSUIElement, 2026-11-08): no Dock icon, no
@@ -79,6 +84,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.target = self
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
+        let topaz = ParentWatch.parentPid(ProcessInfo.processInfo.environment)
+        dictationWatch = DictationWatch(topazPid: topaz) { [weak self] listening in
+            self?.showDictation(listening)
+        }
+    }
+
+    /// The gem: blue (MenuBarIconListening, not a template) while dictation
+    /// listens, else the template gem that follows the menu bar's appearance.
+    private func showDictation(_ listening: Bool) {
+        logger.info("fn dictation \(listening ? "listening" : "stopped", privacy: .public): gem \(listening ? "blue" : "normal", privacy: .public)")
+        let icon = NSImage(named: listening ? "MenuBarIconListening" : "MenuBarIcon")
+        icon?.isTemplate = !listening
+        statusItem?.button?.image = icon
     }
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
