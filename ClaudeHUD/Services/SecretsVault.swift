@@ -3,15 +3,15 @@ import os
 
 private let logger = Logger(subsystem: "com.claudehud", category: "SecretsVault")
 
-/// In-memory secrets cache backed by a single Touch ID-protected Keychain item.
+/// In-memory secrets cache backed by one Keychain item (service
+/// com.claudehud.vault, account secrets) holding every secret as a JSON blob.
 ///
-/// Call `unlock()` once at app launch to trigger a single Touch ID prompt. After
-/// that, all reads are synchronous in-memory lookups — no further prompts, even
-/// after rebuilds with new ad-hoc signatures. Writes update both the cache and
-/// the Keychain (no prompt on write).
-///
-/// This replaces the previous scheme of per-credential Keychain items, each with
-/// its own ACL that prompted separately on every signature change.
+/// `unlock()` reads it once at launch; after that every read is an in-memory
+/// lookup. Writes update the cache and then the item, in order, on a queue of
+/// their own, so the main thread never waits on the keychain. The item is read
+/// and written through /usr/bin/security (SecurityTool), whose Apple signature
+/// does not change with Loupe's builds, so one "Always Allow" holds across
+/// rebuilds (Ben, 2026-11-08).
 final class SecretsVault: @unchecked Sendable {
     static let shared = SecretsVault()
 
@@ -27,6 +27,12 @@ final class SecretsVault: @unchecked Sendable {
     private static let service = "com.claudehud.vault"
     private static let account = "secrets"
     private static let migrationKey = "com.claudehud.vault.migrated.v1"
+    /// Keychain calls, in order, off the main thread.
+    private let io = DispatchQueue(label: "com.claudehud.vault.io")
+    /// Long enough for Ben to answer a keychain dialog; past it the vault
+    /// stops waiting and stays locked (the dialog is left alone).
+    private static let readTimeout: TimeInterval = 300
+    private static let writeTimeout: TimeInterval = 60
 
     private init() {}
 
@@ -55,16 +61,24 @@ final class SecretsVault: @unchecked Sendable {
             logger.error("Write refused: vault is locked")
             return
         }
-        persist(snapshot)
+        io.async { self.persist(snapshot) }
     }
 
-    /// Unlock the vault by reading from Keychain. Triggers Touch ID once.
-    /// On first run, migrates legacy per-service items into the new vault.
+    /// Unlock the vault by reading its item, off the main thread. On first
+    /// run, migrates legacy per-service items into the new vault.
     func unlock() async {
         if isUnlocked { return }
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            io.async {
+                self.unlockNow()
+                done.resume()
+            }
+        }
+    }
 
+    private func unlockNow() {
+        if isUnlocked { return }
         let migrated = UserDefaults.standard.bool(forKey: Self.migrationKey)
-
         if !migrated {
             NSLog("[SecretsVault] Running one-time migration from legacy keychain items")
             let (legacy, readFailed) = Self.loadLegacySecrets()
@@ -75,54 +89,36 @@ final class SecretsVault: @unchecked Sendable {
                 UserDefaults.standard.set(true, forKey: Self.migrationKey)
                 NSLog("[SecretsVault] Migration complete — legacy items deleted")
             } else {
-                NSLog("[SecretsVault] Migration incomplete (persisted=\(persisted), readFailed=\(readFailed)) — legacy items preserved")
+                NSLog("[SecretsVault] Migration incomplete (persisted=\(persisted), readFailed=\(readFailed)) — legacy items kept")
             }
             return
         }
-
-        switch await Self.loadFromKeychain() {
+        switch Self.loadFromKeychain() {
         case .found(let loaded):
             lock.withLock { cached = loaded }
         case .notFound:
             lock.withLock { cached = Secrets() }
         case .failed:
-            // Cancelled Touch ID, a Keychain error or an undecodable blob:
-            // stay locked so no write can replace the stored secrets.
+            // A refused or unanswered dialog, a keychain error or an
+            // undecodable blob: stay locked so no write can replace the
+            // stored secrets.
             logger.error("Vault stays locked: Keychain load failed")
         }
     }
 
     // MARK: - Keychain I/O
 
-    /// Persist the full secrets blob to Keychain. Returns true on success.
+    /// Persist the full secrets blob. Returns true once the item holds it.
     @discardableResult
     private func persist(_ secrets: Secrets) -> Bool {
         guard let data = try? JSONEncoder().encode(secrets) else {
             NSLog("[SecretsVault] Failed to encode secrets")
             return false
         }
-
-        // Classic keychain — the only option without a provisioning profile.
-        // Item gets an ACL bound to the calling binary's signature; user sees
-        // one password prompt per rebuild (ad-hoc signatures change each build).
-        // "Always Allow" holds until the next rebuild.
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: Self.account,
-        ]
-        SecItemDelete(deleteQuery as CFDictionary)
-
-        let addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: Self.account,
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        ]
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-        if status != errSecSuccess {
-            NSLog("[SecretsVault] SecItemAdd failed: \(status)")
+        let result = SecurityTool.save(service: Self.service, account: Self.account,
+                                       secret: data, timeout: Self.writeTimeout)
+        guard result == .saved else {
+            NSLog("[SecretsVault] Vault item not saved: \(result)")
             return false
         }
         NSLog("[SecretsVault] Vault item saved successfully")
@@ -135,29 +131,20 @@ final class SecretsVault: @unchecked Sendable {
         case failed
     }
 
-    private static func loadFromKeychain() async -> LoadResult {
-        await Task.detached { () -> LoadResult in
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: SecretsVault.service,
-                kSecAttrAccount as String: SecretsVault.account,
-                kSecReturnData as String: true,
-                kSecMatchLimit as String: kSecMatchLimitOne,
-            ]
-
-            var result: AnyObject?
-            let status = SecItemCopyMatching(query as CFDictionary, &result)
-            if status == errSecItemNotFound { return .notFound }
-            guard status == errSecSuccess, let data = result as? Data else {
-                NSLog("[SecretsVault] Vault load failed: \(status)")
-                return .failed
-            }
+    private static func loadFromKeychain() -> LoadResult {
+        switch SecurityTool.read(service: service, account: account, timeout: readTimeout) {
+        case .notFound:
+            return .notFound
+        case .found(let data):
             guard let secrets = try? JSONDecoder().decode(Secrets.self, from: data) else {
                 NSLog("[SecretsVault] Vault blob did not decode")
                 return .failed
             }
             return .found(secrets)
-        }.value
+        case let other:
+            NSLog("[SecretsVault] Vault load failed: \(other)")
+            return .failed
+        }
     }
 
     // MARK: - Legacy Migration
@@ -175,26 +162,18 @@ final class SecretsVault: @unchecked Sendable {
         var readFailed = false
 
         func readLegacy(service: String, account: String) -> String? {
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: service,
-                kSecAttrAccount as String: account,
-                kSecReturnData as String: true,
-                kSecMatchLimit as String: kSecMatchLimitOne,
-            ]
-            var result: AnyObject?
-            let status = SecItemCopyMatching(query as CFDictionary, &result)
-            if status == errSecItemNotFound { return nil }
-            guard status == errSecSuccess, let data = result as? Data else {
-                // User canceled prompt, auth failed, or other error — do not
-                // proceed with deletion.
-                logger.warning("Legacy item \(service)/\(account) unreadable: \(status)")
+            switch SecurityTool.read(service: service, account: account, timeout: readTimeout) {
+            case .notFound:
+                return nil
+            case .found(let data):
+                return String(data: data, encoding: .utf8)
+            case let other:
+                // Refused, unanswered or another error: do not proceed with deletion.
+                logger.warning("Legacy item \(service)/\(account) unreadable: \(String(describing: other))")
                 readFailed = true
                 return nil
             }
-            return String(data: data, encoding: .utf8)
         }
-
         let secrets = Secrets(
             anthropicKey: readLegacy(service: legacyItems[0].service, account: legacyItems[0].account),
             claudeAiCookie: readLegacy(service: legacyItems[1].service, account: legacyItems[1].account),
@@ -205,12 +184,7 @@ final class SecretsVault: @unchecked Sendable {
 
     private static func deleteLegacyItems() {
         for item in legacyItems {
-            let query: [String: Any] = [
-                kSecClass as String: kSecClassGenericPassword,
-                kSecAttrService as String: item.service,
-                kSecAttrAccount as String: item.account,
-            ]
-            SecItemDelete(query as CFDictionary)
+            SecurityTool.delete(service: item.service, account: item.account, timeout: writeTimeout)
         }
     }
 }

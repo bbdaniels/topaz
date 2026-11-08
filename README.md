@@ -185,7 +185,8 @@ ClaudeHUD/
     SessionHistoryService.swift    # Scan ~/.claude/projects/ for past sessions
     TerminalService.swift          # Terminal app detection, selection, command launch
     PermissionWatcherService.swift # Monitor pending permission requests
-    KeychainService.swift          # API key storage
+    SecretsVault.swift             # Secrets cache, one Keychain item
+    SecurityTool.swift             # Keychain through /usr/bin/security
     HotkeyService.swift            # Global hotkey registration
     RemoteControlServerService.swift # launchd agent for claude remote-control
     RemoteControlReload.swift        # when it may restart: waits for its live sessions

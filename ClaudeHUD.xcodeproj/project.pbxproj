@@ -19,7 +19,6 @@
 		12AE9346A29D1F051C80A60E /* MenuBarHiding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3659F4225CE0E8541CDD4201 /* MenuBarHiding.swift */; };
 		15100193946D0F95D929048B /* WezTermService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B98C61ABDD9E571898ADC628 /* WezTermService.swift */; };
 		1757F518D88364C3E5A3D218 /* SessionHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCE95C51E4C114A93E8C4749 /* SessionHostTests.swift */; };
-		1A5B1E57FB663CDDA42D3A34 /* SlackFileLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFBE827B2A3EA0BF75B317EF /* SlackFileLog.swift */; };
 		1B28739EE33F518180B447F8 /* DictationLight.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC277EB155BB61CBCF1E206 /* DictationLight.swift */; };
 		1C9D90AF89B565B85B25A3A2 /* StripHosting.swift in Sources */ = {isa = PBXBuildFile; fileRef = D979567FFA9EBCF4505E08E2 /* StripHosting.swift */; };
 		1D8DECC7A48596034B9B6CAF /* MenuBarHiding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3659F4225CE0E8541CDD4201 /* MenuBarHiding.swift */; };
@@ -49,6 +48,7 @@
 		4DEA00856BE8FFB74E36A917 /* NoteContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9236DD5E1930C1B92335C9C5 /* NoteContentView.swift */; };
 		4EDA095CE5FA7A6B7C9A3B40 /* PanelPlacementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CCD49CF023D8FE4FCF52366 /* PanelPlacementTests.swift */; };
 		4EEC58697576EEABDCDC19D2 /* ActiveTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B41B2701679A6FA57B239A02 /* ActiveTasks.swift */; };
+		5044C8C4EAC46DDF70EDF8E5 /* SecurityTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 820B1E3ECBDB44E62066FD93 /* SecurityTool.swift */; };
 		51D4582E94415B444FF4368F /* ParentWatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00B446859D84BC9123B1DC42 /* ParentWatch.swift */; };
 		542A034864617B7ABDA85B0D /* SessionFiling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FAE66E99EB85A66B1E4DFDD /* SessionFiling.swift */; };
 		549CE25D176CD914F16D413C /* RemoteControlReload.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6620B0A1720DA0352F1893D /* RemoteControlReload.swift */; };
@@ -82,6 +82,7 @@
 		8FA5F9C2B51FAC76BF7CBBB7 /* hud-slack-mcp.py in Resources */ = {isa = PBXBuildFile; fileRef = 1D731581C9FAF0D35F075729 /* hud-slack-mcp.py */; };
 		904EF29F4E0A782352DB55C9 /* HostProcsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56D94EDE8FDD699B87FB0898 /* HostProcsTests.swift */; };
 		9092A413B34B317EF735C5AB /* TranscriptHead.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD67EC652572F4A5C555BDEC /* TranscriptHead.swift */; };
+		99B82DD6DA081FAEA7067B88 /* SecurityTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 820B1E3ECBDB44E62066FD93 /* SecurityTool.swift */; };
 		9C3637274F96736D202895D8 /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 330288F7F0E1F56443C80A74 /* TodayView.swift */; };
 		9D1751A3FD807556940D4438 /* ntfy-notify.sh in Resources */ = {isa = PBXBuildFile; fileRef = C6D82DD1759F543B48C98E52 /* ntfy-notify.sh */; };
 		9DA0FDBD089DA3477830FAE4 /* MCPConfigLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBEE4757D18F462A43F672AB /* MCPConfigLoader.swift */; };
@@ -89,7 +90,6 @@
 		A48E9985D965A3F9C26A9B03 /* ClaudeProcessClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05D7C162E33744B76D6CE257 /* ClaudeProcessClassifierTests.swift */; };
 		A6CE6F13DE90FD2DB48C69A2 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CFD163F5056F20A18D23477 /* AppState.swift */; };
 		A71658DD4D0B31D25606F7AB /* SessionFiling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FAE66E99EB85A66B1E4DFDD /* SessionFiling.swift */; };
-		AA1830B8C3DD8D346BBF9895 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE31FD7228157DC53CDE8B9E /* KeychainService.swift */; };
 		AB1D0A0392E8C30197A7DC11 /* VaultIngestService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 207CDABC03F0B223AFE35A88 /* VaultIngestService.swift */; };
 		ABA57CDB88D76A33242A7945 /* WezTermService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B98C61ABDD9E571898ADC628 /* WezTermService.swift */; };
 		ABB72147FFBF17F0076E58DC /* ClaudeWebFetcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FE78438CDBB1B82E2CD3203 /* ClaudeWebFetcher.swift */; };
@@ -111,6 +111,7 @@
 		E29AF62B9B355DB0C505CF22 /* PanelToggle.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECF32EB6AD8CA6F1CBD98A8A /* PanelToggle.swift */; };
 		E7EFBDDB60EC4968B77D04B5 /* SkillsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C704E240AFCDBD31AC48951 /* SkillsService.swift */; };
 		E957217FD251405B515AC2C1 /* PanelToggle.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECF32EB6AD8CA6F1CBD98A8A /* PanelToggle.swift */; };
+		E9D625348D920254FEF4E663 /* SecurityToolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B87F99C4DDAE59780460CDB1 /* SecurityToolTests.swift */; };
 		EEC5054A3B33EBA08F1A8D24 /* JSONRPCTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 620FB4690A1A9D7786A56696 /* JSONRPCTypes.swift */; };
 		F17C080B97EEB5E9D2735B14 /* VaultAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E56E18D7A0EAD77100C255 /* VaultAccess.swift */; };
 		F2B09579FD4987288F5F2B4A /* PanelPlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7F5DAF9B8216FB31DA99E31 /* PanelPlacement.swift */; };
@@ -160,6 +161,7 @@
 		6AA4D330DBDA52E4F3C827CF /* VaultAccessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultAccessTests.swift; sourceTree = "<group>"; };
 		6E85FBA53BC2B877A3E34EF6 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
 		7C833E15743B893B9F72BC7D /* SkillFile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillFile.swift; sourceTree = "<group>"; };
+		820B1E3ECBDB44E62066FD93 /* SecurityTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecurityTool.swift; sourceTree = "<group>"; };
 		89B4EC6274B95DFA33E0C571 /* ClaudeProcessMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeProcessMonitor.swift; sourceTree = "<group>"; };
 		8A8692269C30DC7C435CE107 /* HUDContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDContentView.swift; sourceTree = "<group>"; };
 		8F610738B5C598F62048D6D9 /* MCPServerManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPServerManager.swift; sourceTree = "<group>"; };
@@ -173,9 +175,9 @@
 		A21A11D410B9F5296C55F5F7 /* SessionFilingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionFilingTests.swift; sourceTree = "<group>"; };
 		A738B4887394612E7ADED77A /* DancingText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DancingText.swift; sourceTree = "<group>"; };
 		AB272797EF5863C22BEFFDE7 /* permission-watcher.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "permission-watcher.sh"; sourceTree = "<group>"; };
-		AFBE827B2A3EA0BF75B317EF /* SlackFileLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlackFileLog.swift; sourceTree = "<group>"; };
 		B280310DE38541F7B2CD6849 /* VaultTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultTabView.swift; sourceTree = "<group>"; };
 		B41B2701679A6FA57B239A02 /* ActiveTasks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveTasks.swift; sourceTree = "<group>"; };
+		B87F99C4DDAE59780460CDB1 /* SecurityToolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecurityToolTests.swift; sourceTree = "<group>"; };
 		B98C61ABDD9E571898ADC628 /* WezTermService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WezTermService.swift; sourceTree = "<group>"; };
 		BA019621667901F1EDBA4E4F /* IMacLauncherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMacLauncherTests.swift; sourceTree = "<group>"; };
 		BBEE4757D18F462A43F672AB /* MCPConfigLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCPConfigLoader.swift; sourceTree = "<group>"; };
@@ -187,7 +189,6 @@
 		C7F5DAF9B8216FB31DA99E31 /* PanelPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelPlacement.swift; sourceTree = "<group>"; };
 		C97BB9EE58B0DBF8AA04FDE7 /* SessionHistoryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionHistoryService.swift; sourceTree = "<group>"; };
 		CDFA4853FA49C5845C653FC5 /* UsageBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageBadge.swift; sourceTree = "<group>"; };
-		CE31FD7228157DC53CDE8B9E /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
 		D57ABA0D74FFFA689FC8C514 /* SessionHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionHost.swift; sourceTree = "<group>"; };
 		D7EE451409BCA1277D6282FF /* IMacLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IMacLauncher.swift; sourceTree = "<group>"; };
 		D906C2A42EF5CC6963D24D58 /* HotkeyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyService.swift; sourceTree = "<group>"; };
@@ -235,7 +236,6 @@
 				EB3BA8639E7160F135AC3EE9 /* HostProcs.swift */,
 				D906C2A42EF5CC6963D24D58 /* HotkeyService.swift */,
 				D7EE451409BCA1277D6282FF /* IMacLauncher.swift */,
-				CE31FD7228157DC53CDE8B9E /* KeychainService.swift */,
 				DB043CB409497C537E66D2B6 /* LibraryService.swift */,
 				3659F4225CE0E8541CDD4201 /* MenuBarHiding.swift */,
 				C7F5DAF9B8216FB31DA99E31 /* PanelPlacement.swift */,
@@ -245,12 +245,12 @@
 				9B94D0D82CF1A2E7920DEE61 /* RemoteControlServerService.swift */,
 				4A1004F7D0D3C5C144210C7D /* ScreenCoverService.swift */,
 				59E8596B647276D0A1586779 /* SecretsVault.swift */,
+				820B1E3ECBDB44E62066FD93 /* SecurityTool.swift */,
 				3FAE66E99EB85A66B1E4DFDD /* SessionFiling.swift */,
 				C97BB9EE58B0DBF8AA04FDE7 /* SessionHistoryService.swift */,
 				D57ABA0D74FFFA689FC8C514 /* SessionHost.swift */,
 				504C9D1F6A897A77D79731E3 /* SessionScan.swift */,
 				1C704E240AFCDBD31AC48951 /* SkillsService.swift */,
-				AFBE827B2A3EA0BF75B317EF /* SlackFileLog.swift */,
 				2D93C91EF3361FF04D9BB0D3 /* TerminalService.swift */,
 				BD67EC652572F4A5C555BDEC /* TranscriptHead.swift */,
 				FAA7DC5B4103396ACB2B5F3F /* UsageService.swift */,
@@ -439,6 +439,7 @@
 				5EC3C3C315F28F2E03693E6F /* ParentWatchTests.swift */,
 				E196A0AEBD4F89C4DBAFB5D7 /* ProjectResolverTests.swift */,
 				194323508DB0D4A4FFC26D7A /* RemoteControlReloadTests.swift */,
+				B87F99C4DDAE59780460CDB1 /* SecurityToolTests.swift */,
 				A21A11D410B9F5296C55F5F7 /* SessionFilingTests.swift */,
 				FCE95C51E4C114A93E8C4749 /* SessionHostTests.swift */,
 				FA085D40E8A53F2FFC35D133 /* SessionMenuTests.swift */,
@@ -578,6 +579,8 @@
 				CD7941AD5A6EEEDF57AED073 /* ProjectResolverTests.swift in Sources */,
 				549CE25D176CD914F16D413C /* RemoteControlReload.swift in Sources */,
 				BD18E24E661B32BFB6BE7544 /* RemoteControlReloadTests.swift in Sources */,
+				99B82DD6DA081FAEA7067B88 /* SecurityTool.swift in Sources */,
+				E9D625348D920254FEF4E663 /* SecurityToolTests.swift in Sources */,
 				A71658DD4D0B31D25606F7AB /* SessionFiling.swift in Sources */,
 				268809B34C1257D1DD4FBCA4 /* SessionFilingTests.swift in Sources */,
 				2175A7C2DE35392D478B5530 /* SessionHost.swift in Sources */,
@@ -620,7 +623,6 @@
 				763D915CF0FBE368DEE6A12F /* HotkeyService.swift in Sources */,
 				8AD16A218DB480071A205E6A /* IMacLauncher.swift in Sources */,
 				EEC5054A3B33EBA08F1A8D24 /* JSONRPCTypes.swift in Sources */,
-				AA1830B8C3DD8D346BBF9895 /* KeychainService.swift in Sources */,
 				833788A1F492EE5E46D352EE /* LibraryItem.swift in Sources */,
 				815353343C4BC778548C4338 /* LibraryRow.swift in Sources */,
 				22E9986D54197F5AACE3B317 /* LibraryService.swift in Sources */,
@@ -642,13 +644,13 @@
 				561F123A3DD19B92F6D0F233 /* ScreenCoverService.swift in Sources */,
 				476DCA2D5B58A1E489619133 /* ScreenCoverView.swift in Sources */,
 				344F340CDF4EAE1B18B24EE1 /* SecretsVault.swift in Sources */,
+				5044C8C4EAC46DDF70EDF8E5 /* SecurityTool.swift in Sources */,
 				542A034864617B7ABDA85B0D /* SessionFiling.swift in Sources */,
 				85FAE3D9A1FB9C99E73D9A64 /* SessionHistoryService.swift in Sources */,
 				B0FD3286D3EB86C0C4B2375E /* SessionHost.swift in Sources */,
 				427C6FFD7C7CE10D04E465E6 /* SessionScan.swift in Sources */,
 				09E0DD3C80E9042CE3E4BC59 /* SkillFile.swift in Sources */,
 				E7EFBDDB60EC4968B77D04B5 /* SkillsService.swift in Sources */,
-				1A5B1E57FB663CDDA42D3A34 /* SlackFileLog.swift in Sources */,
 				AF44EBFA0AB87F2490D412F9 /* StdioMCPClient.swift in Sources */,
 				1C9D90AF89B565B85B25A3A2 /* StripHosting.swift in Sources */,
 				2DC1704ACE2F286704A1DF5C /* TerminalService.swift in Sources */,

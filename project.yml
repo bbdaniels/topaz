@@ -57,6 +57,7 @@ targets:
       - path: ClaudeHUD/Services/DictationLight.swift
       - path: ClaudeHUD/Views/StripHosting.swift
       - path: ClaudeHUD/Services/PanelPlacement.swift
+      - path: ClaudeHUD/Services/SecurityTool.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.claudehud.tests
