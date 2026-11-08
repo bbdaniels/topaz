@@ -424,6 +424,16 @@ enum SessionLight: Equatable {
     case running, holding, attention, dimmed
 
     static let dimAfter: TimeInterval = 3600
+
+    /// The name the WezTerm lights file carries (`WezTerm.lightsJSON`).
+    var name: String {
+        switch self {
+        case .running: return "running"
+        case .holding: return "holding"
+        case .attention: return "attention"
+        case .dimmed: return "dimmed"
+        }
+    }
     static let holdingAfter: TimeInterval = 300
 
     /// `lastMoved` is when the session last wrote its state or transcript;

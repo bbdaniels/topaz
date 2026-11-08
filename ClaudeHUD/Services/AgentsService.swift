@@ -327,6 +327,13 @@ final class AgentsService: ObservableObject {
             return (a.updatedAt ?? .distantPast) > (b.updatedAt ?? .distantPast)
         }
 
+        // Each open tab's dot in WezTerm is this session's light.
+        let now = Date()
+        WezTerm.publishLights(result.compactMap { a in
+            guard a.isAlive, let key = Self.attachKey(a), let pane = attaches[key] else { return nil }
+            return WezTerm.TabLight(paneId: pane.paneId, tabTitle: pane.tabTitle, light: a.light(now: now), cwd: a.cwd)
+        }, now: now)
+
         self.agents = result
         self.lastRefresh = Date()
         self.lastError = result.isEmpty && jobDirs.isEmpty ? "No daemon jobs found in ~/.claude/jobs." : nil

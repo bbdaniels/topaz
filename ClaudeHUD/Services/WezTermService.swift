@@ -123,6 +123,50 @@ enum WezTerm {
         ["/bin/zsh", "-l", "-c", "source ~/.zshrc 2>/dev/null; unset CLAUDECODE; " + command]
     }
 
+    /// One tab's dot as ClaudeHUD lights it: the WezTerm pane, its tab's
+    /// title, the session's `SessionLight` and working directory.
+    struct TabLight: Equatable {
+        let paneId: Int
+        let tabTitle: String
+        let light: SessionLight
+        let cwd: String
+    }
+
+    /// The lights file the WezTerm config reads (bbdaniels/personal
+    /// `deploy/mac/wezterm/sessions.py`), so a tab's dot is the HUD's own
+    /// light for its session, from the one rule (`SessionLight.of`), on the
+    /// Mac and the iMac alike. `at` lets the reader tell a file the HUD
+    /// stopped writing from a current one.
+    static func lightsJSON(_ tabs: [TabLight], at: Date) -> Data {
+        let rows: [[String: Any]] = tabs.sorted { $0.paneId < $1.paneId }.map {
+            ["pane": $0.paneId, "tab": $0.tabTitle, "light": $0.light.name, "cwd": $0.cwd]
+        }
+        let obj: [String: Any] = ["at": Int(at.timeIntervalSince1970), "tabs": rows]
+        return (try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys])) ?? Data()
+    }
+
+    static var lightsFile: URL {
+        URL(fileURLWithPath: NSHomeDirectory() + "/Library/Caches/ClaudeHUD/wezterm-lights.json")
+    }
+
+    @MainActor private static var lastLights: (tabs: [TabLight], at: Date)?
+
+    /// Write the lights when they change, and at least every 30 seconds so
+    /// the reader can trust the file's age.
+    @MainActor
+    static func publishLights(_ tabs: [TabLight], now: Date = Date()) {
+        let sorted = tabs.sorted { $0.paneId < $1.paneId }
+        if let last = lastLights, last.tabs == sorted, now.timeIntervalSince(last.at) < 30 { return }
+        let url = lightsFile
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do {
+            try lightsJSON(sorted, at: now).write(to: url, options: .atomic)
+            lastLights = (sorted, now)
+        } catch {
+            logger.error("WezTerm lights not written: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     // MARK: Running it
 
     static var isInstalled: Bool { FileManager.default.fileExists(atPath: cliPath) }

@@ -39,6 +39,12 @@ class AppState: ObservableObject {
         // orphan is always a confirmed click.
         processMonitor.start()
 
+        // Live sessions from launch, not from the first look at the panel:
+        // each reload also writes the WezTerm tab lights
+        // (`WezTerm.publishLights`), which must be current whether or not the
+        // panel has been opened.
+        agentsService.start()
+
         // Vault session state: poll every 30s for per-project Sessions.md
         // provenance. Read-only; the daily review (personal repo,
         // vault/daily_review) owns the ledger writes.

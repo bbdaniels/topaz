@@ -73,4 +73,23 @@ final class WezTermServiceTests: XCTestCase {
         XCTAssertTrue(WezTerm.macTabTitle(project: "rc-probe").contains(" "))
         XCTAssertEqual(WezTerm.macTabTitle(project: "ClaudeHUD"), "ClaudeHUD (Mac)")
     }
+
+    /// The WezTerm config reads each tab's dot from this file, so it names
+    /// the pane, the tab and the HUD's light for the session in it.
+    func testTheLightsFileCarriesEachTabsLight() throws {
+        let tabs = [
+            WezTerm.TabLight(paneId: 7, tabTitle: "projects (Mac)", light: .holding, cwd: "/Users/u/Projects"),
+            WezTerm.TabLight(paneId: 1, tabTitle: "rc-tech-setup-1107", light: .running, cwd: "/home/u/Projects/pi"),
+        ]
+        let data = WezTerm.lightsJSON(tabs, at: Date(timeIntervalSince1970: 1_000))
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(obj["at"] as? Int, 1_000)
+        let rows = try XCTUnwrap(obj["tabs"] as? [[String: Any]])
+        XCTAssertEqual(rows.map { $0["pane"] as? Int }, [1, 7])
+        XCTAssertEqual(rows.map { $0["light"] as? String }, ["running", "holding"])
+        XCTAssertEqual(rows[1]["tab"] as? String, "projects (Mac)")
+        XCTAssertEqual(rows[1]["cwd"] as? String, "/Users/u/Projects")
+        XCTAssertEqual([SessionLight.running, .holding, .attention, .dimmed].map(\.name),
+                       ["running", "holding", "attention", "dimmed"])
+    }
 }
