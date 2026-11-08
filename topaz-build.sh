@@ -139,10 +139,17 @@ install_staged() {
   fi
   rm -rf $APP /Applications/WezTerm.app
   ditto $STAGE $APP
-  $LSREGISTER -f $APP
-  "$CONFIG_INSTALLER"
+  # From here Topaz is reopened whatever else fails, so a failed config
+  # install never leaves it closed; the failure is reported and returned.
+  local failed=
+  $LSREGISTER -f $APP || failed="lsregister"
+  "$CONFIG_INSTALLER" || failed="${failed:+$failed, }the config installer ($CONFIG_INSTALLER)"
   open $APP
   echo "Installed $(/usr/libexec/PlistBuddy -c 'Print :TopazCommit' $APP/Contents/Info.plist) to $APP and reopened it."
+  if [[ -n $failed ]]; then
+    echo "But $failed failed; Topaz is running on the config it had." >&2
+    exit 1
+  fi
 }
 
 # Replace ClaudeHUD inside the installed Topaz.app and have Topaz relaunch it.
