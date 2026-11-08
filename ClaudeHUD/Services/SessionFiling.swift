@@ -114,11 +114,15 @@ enum SessionFiling {
     /// folder name (`ProjectResolver.resolveFolder`, or a cache of it); the
     /// directories of a session that ran on `host` are mapped onto this Mac
     /// before it sees them (`SessionHost.macPath`, the identity for the Mac).
-    /// The claim is read by the caller, from `host.claimsDir()`.
+    /// The claim is read by the caller, from `host.claimsDir()`. A claim
+    /// naming a project folder that no longer exists (`projectExists` false,
+    /// the folder renamed or archived) counts as no claim, so the session is
+    /// filed by its directories rather than under a project that is gone.
     static func resolveFolder(claim: Claim?, cwdCounts: [String: Int], fallbackCwd: String,
                               host: SessionHost = .mac, home: String = NSHomeDirectory(),
+                              projectExists: (String) -> Bool = { _ in true },
                               resolve: (String) -> String?) -> String? {
-        if let claim { return claim.folder }
+        if let claim, projectExists(claim.folder) { return claim.folder }
         var counts: [String: Int] = [:]
         for (cwd, n) in cwdCounts { counts[host.macPath(cwd, home: home), default: 0] += n }
         if let folder = dominantFolder(cwdCounts: counts, resolve: resolve) { return folder }

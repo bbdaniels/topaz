@@ -205,7 +205,14 @@ final class VaultProjectService: ObservableObject {
                     filed[s.sessionId] = SessionFiling.resolveFolder(
                         claim: SessionFiling.readClaim(sessionId: s.sessionId, in: s.host.claimsDir()),
                         cwdCounts: cwdCounts[s.sessionId] ?? [:],
-                        fallbackCwd: s.cwd, host: s.host, resolve: resolve)
+                        fallbackCwd: s.cwd, host: s.host,
+                        projectExists: { folder in
+                            var isDir: ObjCBool = false
+                            return FileManager.default.fileExists(
+                                atPath: (vaultRoot as NSString).appendingPathComponent(folder),
+                                isDirectory: &isDir) && isDir.boolValue
+                        },
+                        resolve: resolve)
                 }
                 return (filed, resolved)
             }.value

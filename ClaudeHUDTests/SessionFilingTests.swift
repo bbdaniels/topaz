@@ -32,6 +32,19 @@ final class SessionFilingTests: XCTestCase {
         XCTAssertEqual(folder, "Claimed")
     }
 
+    /// A claim naming a project folder that is gone (renamed or archived) is
+    /// no claim: the session files by its directories.
+    func testAClaimOnAMissingProjectCountsAsNoClaim() {
+        let folder = SessionFiling.resolveFolder(claim: claim("Gone"), cwdCounts: ["/p/A": 50],
+                                                 fallbackCwd: "/p/B",
+                                                 projectExists: { $0 != "Gone" }, resolve: resolve)
+        XCTAssertEqual(folder, "A")
+        XCTAssertEqual(SessionFiling.resolveFolder(claim: claim("Claimed"), cwdCounts: ["/p/A": 50],
+                                                   fallbackCwd: "/p/B",
+                                                   projectExists: { $0 != "Gone" }, resolve: resolve),
+                       "Claimed")
+    }
+
     func testDominantRecordDirectoryWinsOverStartDirectory() {
         let folder = SessionFiling.resolveFolder(claim: nil, cwdCounts: ["/p/A": 10, "/p/A/plans": 5, "/p/B": 12],
                                                  fallbackCwd: "/Users/x/Projects", resolve: resolve)
