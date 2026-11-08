@@ -37,6 +37,8 @@ use wezterm_toast_notification::*;
 mod colorease;
 mod commands;
 mod customglyph;
+#[cfg(target_os = "macos")]
+mod dictation;
 mod download;
 mod frontend;
 mod glyphcache;

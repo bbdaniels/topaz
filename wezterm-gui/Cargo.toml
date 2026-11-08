@@ -107,6 +107,11 @@ wgpu.workspace = true
 window-funcs.workspace = true
 window.workspace = true
 
+# fn dictation (Topaz): the microphone and the speech to text socket
+[target.'cfg(target_os = "macos")'.dependencies]
+cpal.workspace = true
+tungstenite.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 shared_library.workspace = true
 winapi = { workspace=true, features = [

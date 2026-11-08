@@ -73,6 +73,7 @@ pub mod background;
 pub mod box_model;
 pub mod charselect;
 pub mod clipboard;
+mod dictation;
 pub mod keyevent;
 pub mod modal;
 mod mouseevent;
@@ -414,6 +415,9 @@ pub struct TermWindow {
     window_background: Vec<LoadedBackgroundLayer>,
 
     current_modifier_and_leds: (Modifiers, KeyboardLedStatus),
+    /// The fn dictation of the current hold of fn, if any
+    #[cfg(target_os = "macos")]
+    fn_dictation: Option<crate::dictation::Session>,
     current_mouse_buttons: Vec<MousePress>,
     current_mouse_capture: Option<MouseCapture>,
 
@@ -528,6 +532,10 @@ impl TermWindow {
 
     fn focus_changed(&mut self, focused: bool, window: &Window) {
         log::trace!("Setting focus to {:?}", focused);
+        if !focused {
+            // fn's release would go to the newly focused app.
+            self.finish_dictation();
+        }
         self.focused = if focused { Some(Instant::now()) } else { None };
         self.quad_generation += 1;
         self.load_os_parameters();
@@ -723,6 +731,8 @@ impl TermWindow {
             window_drag_position: None,
             current_mouse_event: None,
             current_modifier_and_leds: Default::default(),
+            #[cfg(target_os = "macos")]
+            fn_dictation: None,
             prev_cursor: PrevCursorPos::new(),
             last_scroll_info: RenderableDimensions::default(),
             tab_state: RefCell::new(HashMap::new()),
@@ -974,6 +984,10 @@ impl TermWindow {
                     }
                 }
                 self.apply_pending_scale_changes();
+                Ok(true)
+            }
+            WindowEvent::FunctionKey(down) => {
+                self.function_key_changed(down);
                 Ok(true)
             }
             WindowEvent::AdviseModifiersLedStatus(modifiers, leds) => {

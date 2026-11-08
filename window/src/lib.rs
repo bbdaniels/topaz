@@ -208,6 +208,9 @@ pub enum WindowEvent {
     PerformKeyAssignment(config::keyassignment::KeyAssignment),
 
     AdviseModifiersLedStatus(Modifiers, KeyboardLedStatus),
+
+    /// The fn (Globe) key went down (true) or up (false); macOS only.
+    FunctionKey(bool),
 }
 
 pub struct WindowEventSender {

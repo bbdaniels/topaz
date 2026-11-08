@@ -511,6 +511,19 @@ pub struct Config {
     #[dynamic(default)]
     pub tab_close_button_at_title_start: bool,
 
+    /// macOS: hold fn (Globe) on its own to dictate into the active pane
+    /// with Anthropic's speech to text, the service of Claude Code's /voice,
+    /// signed in with Claude Code's login. Words are typed as they are
+    /// recognized; another key during the hold cancels, so fn shortcuts
+    /// keep working.
+    #[dynamic(default)]
+    pub fn_dictation: bool,
+
+    /// Words and names to bias fn dictation toward (sent as the service's
+    /// x-config-keyterms, up to 1024 characters).
+    #[dynamic(default)]
+    pub fn_dictation_keyterms: Vec<String>,
+
     /// If true, show_tab_index_in_tab_bar uses a zero-based index.
     /// The default is false and the tab shows a one-based index.
     #[dynamic(default)]

@@ -513,6 +513,7 @@ impl Window {
                 last_wheel: Instant::now(),
                 key_is_down: None,
                 dead_pending: None,
+                function_key_down: false,
                 fullscreen: None,
                 config: config.clone(),
                 ime_state: ImeDisposition::None,
@@ -1624,6 +1625,10 @@ struct Inner {
 
     /// First in a dead-key sequence
     dead_pending: Option<DeadKeyState>,
+
+    /// Whether the fn (Globe) key is down, from the flags of the last
+    /// flagsChanged event, so that each change is reported once
+    function_key_down: bool,
 
     /// When using simple fullscreen mode, this tracks
     /// the window dimensions that need to be restored
@@ -2941,11 +2946,23 @@ impl WindowView {
             KeyboardLedStatus::empty()
         };
 
+        // NSEventModifierFlagFunction: key_modifiers() leaves it out, as
+        // arrow and function keys carry it too; here, in flagsChanged, it
+        // changes only when the fn (Globe) key itself goes down or up.
+        const FUNCTION_KEY_FLAG: u64 = 1 << 23;
+        let function_key_down = modifier_flags.bits() & FUNCTION_KEY_FLAG != 0;
+
         if let Some(myself) = Self::get_this(this) {
             let mut inner = myself.inner.borrow_mut();
             inner
                 .events
                 .dispatch(WindowEvent::AdviseModifiersLedStatus(modifiers, leds));
+            if function_key_down != inner.function_key_down {
+                inner.function_key_down = function_key_down;
+                inner
+                    .events
+                    .dispatch(WindowEvent::FunctionKey(function_key_down));
+            }
         }
     }
 

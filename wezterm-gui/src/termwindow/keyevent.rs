@@ -428,6 +428,9 @@ impl super::TermWindow {
     }
 
     pub fn raw_key_event_impl(&mut self, key: RawKeyEvent, context: &dyn WindowOps) {
+        if key.key_is_down {
+            self.cancel_dictation_for_key();
+        }
         // The leader key is a kind of modal modifier key.
         // It is allowed to be active for up to the leader timeout duration,
         // after which it auto-deactivates.
@@ -597,6 +600,9 @@ impl super::TermWindow {
     }
 
     pub fn key_event_impl(&mut self, window_key: KeyEvent, context: &dyn WindowOps) {
+        if window_key.key_is_down {
+            self.cancel_dictation_for_key();
+        }
         let pane = match self.get_active_pane_or_overlay() {
             Some(pane) => pane,
             None => return,
