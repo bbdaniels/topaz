@@ -416,9 +416,10 @@ pub struct TermWindow {
     window_background: Vec<LoadedBackgroundLayer>,
 
     current_modifier_and_leds: (Modifiers, KeyboardLedStatus),
-    /// The fn dictation of the current hold of fn, if any
+    /// The fn dictation: the session of the current hold of fn, or of the
+    /// last one while its final text is awaited
     #[cfg(target_os = "macos")]
-    fn_dictation: Option<crate::dictation::Session>,
+    fn_dictation: crate::dictation::control::Dictation,
     current_mouse_buttons: Vec<MousePress>,
     current_mouse_capture: Option<MouseCapture>,
 
@@ -537,8 +538,9 @@ impl TermWindow {
     fn focus_changed(&mut self, focused: bool, window: &Window) {
         log::trace!("Setting focus to {:?}", focused);
         if !focused {
-            // fn's release would go to the newly focused app.
-            self.finish_dictation();
+            // fn's release would go to the newly focused app, and what is
+            // typed would land unseen: type nothing more.
+            self.cancel_dictation();
         }
         self.focused = if focused { Some(Instant::now()) } else { None };
         self.quad_generation += 1;
@@ -736,7 +738,7 @@ impl TermWindow {
             current_mouse_event: None,
             current_modifier_and_leds: Default::default(),
             #[cfg(target_os = "macos")]
-            fn_dictation: None,
+            fn_dictation: Default::default(),
             prev_cursor: PrevCursorPos::new(),
             last_scroll_info: RenderableDimensions::default(),
             tab_state: RefCell::new(HashMap::new()),

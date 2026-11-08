@@ -11,6 +11,8 @@ pub mod confirm_close_pane;
 pub mod copy;
 pub mod debug;
 pub mod launcher;
+#[cfg(target_os = "macos")]
+pub mod notice;
 pub mod prompt;
 pub mod quickselect;
 pub mod selector;
