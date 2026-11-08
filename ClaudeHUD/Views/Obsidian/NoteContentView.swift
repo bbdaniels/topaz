@@ -55,6 +55,9 @@ struct NoteContentView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+            // In the title-bar strip (.fullSizeContentView); its empty space
+            // moves the window.
+            .background(WindowDragArea())
 
             Divider().opacity(0.5)
 

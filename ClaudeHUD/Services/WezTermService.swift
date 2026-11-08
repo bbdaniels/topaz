@@ -4,7 +4,9 @@ import os
 
 private let logger = Logger(subsystem: "com.claudehud", category: "WezTerm")
 
-/// THE terminal ClaudeHUD opens sessions in (Ben, 2026-11-07): WezTerm, one
+/// THE terminal ClaudeHUD opens sessions in (Ben, 2026-11-07): Topaz, Ben's
+/// build of WezTerm (renamed 2026-11-08; binaries and `wezterm cli` keep the
+/// WezTerm names), one
 /// window, one tab per session. Before this, Ghostty (and a picker of other
 /// terminals) opened a window per project and was steered over AppleScript.
 ///
@@ -25,9 +27,9 @@ private let logger = Logger(subsystem: "com.claudehud", category: "WezTerm")
 /// The parsing, matching and argument building are pure and unit tested;
 /// `open`, `panes` and `activateApp` run them.
 enum WezTerm {
-    static let appPath = "/Applications/WezTerm.app"
+    static let appPath = "/Applications/Topaz.app"
     static let cliPath = appPath + "/Contents/MacOS/wezterm"
-    static let bundleIdentifier = "com.github.wez.wezterm"
+    static let bundleIdentifier = "com.bbdaniels.topaz"
 
     /// One row of `wezterm cli list --format json`: a pane, its tab and window.
     struct Pane: Equatable, Decodable {

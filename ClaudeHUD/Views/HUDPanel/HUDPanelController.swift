@@ -18,7 +18,10 @@ class HUDPanelController {
             // and the SwiftUI content draws its own translucent background,
             // so dropping .hudWindow is visually ~identical but restores
             // tooltips.
-            styleMask: [.titled, .closable, .resizable],
+            // .fullSizeContentView (Ben, 2026-11-08): with the window buttons
+            // gone, the header row moves up into the empty title-bar strip;
+            // its empty space moves the window (WindowDragArea).
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
@@ -93,7 +96,8 @@ class HUDPanelController {
         // participation in the responder chain; with a raw NSHostingView there
         // is no controller, so every `.help(...)` in the app silently no-ops
         // and no tooltip ever appears.
-        panel.contentViewController = NSHostingController(rootView: contentView)
+        panel.contentViewController = NSHostingController(
+            rootView: contentView.ignoresSafeArea(.container, edges: .top))
 
         self.panel = panel
     }

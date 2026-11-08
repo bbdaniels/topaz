@@ -388,7 +388,7 @@ private struct AgentRow: View {
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(Color.accentColor.opacity(0.15))
                         .clipShape(Capsule())
-                        .help("Open in the WezTerm tab \"\(tab)\"; click ➜ to bring it forward")
+                        .help("Open in the Topaz tab \"\(tab)\"; click ➜ to bring it forward")
                     }
                     // Liveness blip: the daemon's state.json lags real
                     // activity by minutes for some sessions, but the

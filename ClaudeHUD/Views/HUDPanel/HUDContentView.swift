@@ -245,6 +245,9 @@ struct HUDContentView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
+            // The header sits in the title-bar strip (.fullSizeContentView);
+            // its empty space, the tab strip's included, moves the window.
+            .background(WindowDragArea())
 
             Divider()
                 .opacity(0.5)
@@ -290,6 +293,22 @@ struct HUDContentView: View {
         }
         .hudTooltipLayer()
     }
+}
+
+/// Empty space that moves its window when dragged, as a title bar does. The
+/// panel's header row sits where the title bar was (Ben, 2026-11-08), and
+/// `isMovableByWindowBackground` stays off because it swallows in-content
+/// drags (tab reordering), so the header's background carries this instead.
+struct WindowDragArea: NSViewRepresentable {
+    final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+        override func mouseDown(with event: NSEvent) {
+            if event.clickCount == 2 { window?.performZoom(nil); return }
+            window?.performDrag(with: event)
+        }
+    }
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 // MARK: - Tab Bar
@@ -1132,7 +1151,7 @@ struct SessionDetailRow: View {
                         .foregroundColor(.white)
                 }
                 .buttonStyle(.borderless)
-                .hudTip("Resume in a new WezTerm tab")
+                .hudTip("Resume in a new Topaz tab")
             }
         }
         .padding(.vertical, 5)
@@ -1279,7 +1298,7 @@ struct InfoPopover: View {
                     .foregroundColor(.secondary)
 
                 InfoRow(icon: "star.fill", text: "**Star:** Pin projects to a Starred section at the top of history")
-                InfoRow(icon: "terminal", text: "**Terminal:** Sessions open as tabs in WezTerm; click `>_` for a new one, right-click to choose the machine")
+                InfoRow(icon: "terminal", text: "**Terminal:** Sessions open as tabs in Topaz; click `>_` for a new one, right-click to choose the machine")
                 // DISABLED — notifications superseded by the daemon agent handler.
                 // InfoRow(icon: "bell.fill", text: "**Notifications:** Desktop via macOS, mobile via [ntfy.sh](https://ntfy.sh)")
                 DancingTextToggle()

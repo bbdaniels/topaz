@@ -25,11 +25,11 @@ class FloatingNoteWindowManager: ObservableObject {
             self?.closeWindow(id: id)
         }
 
-        let hostingView = NSHostingView(rootView: contentView)
+        let hostingView = NSHostingView(rootView: contentView.ignoresSafeArea(.container, edges: .top))
 
         let window = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 500, height: 600),
-            styleMask: [.titled, .closable, .resizable, .nonactivatingPanel, .hudWindow],
+            styleMask: [.titled, .closable, .resizable, .nonactivatingPanel, .hudWindow, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
