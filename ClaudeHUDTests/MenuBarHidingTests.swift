@@ -15,6 +15,8 @@ final class MenuBarHidingTests: XCTestCase {
         var calls: [(system: [Int], bundles: [String])] = []
         var pending: [(Result<MenuBarRestriction, Error>) -> Void] = []
         var handles: [Handle] = []
+        var agent: Int32? = 648
+        func enforcer() -> Int32? { agent }
 
         func activate(allowedSystemItems: [Int], allowedBundleIdentifiers: [String],
                       completion: @escaping (Result<MenuBarRestriction, Error>) -> Void) {
@@ -108,6 +110,49 @@ final class MenuBarHidingTests: XCTestCase {
         XCTAssertEqual(late.invalidated, 1)
         XCTAssertFalse(h.isOn)
         XCTAssertFalse(make().isRemembered)
+    }
+
+    func testARestartedMenuBarAgentTurnsTheCheckmarkOffAndAsksAgain() {
+        let h = make()
+        h.toggle(); let first = fake.grant()
+        h.verify()
+        XCTAssertTrue(h.isOn, "the same MenuBarAgent: still held")
+        XCTAssertEqual(fake.calls.count, 1)
+
+        fake.agent = 9001          // launchd started a new MenuBarAgent
+        h.verify()
+        XCTAssertFalse(h.isOn, "the bar shows everything until the new one grants it")
+        XCTAssertEqual(first.invalidated, 1)
+        XCTAssertEqual(fake.calls.count, 2)
+        fake.grant()
+        XCTAssertTrue(h.isOn)
+        h.verify()
+        XCTAssertEqual(fake.calls.count, 2, "held by the new one: nothing more to ask")
+    }
+
+    func testARestartWhileOffAsksNothing() {
+        let h = make()
+        h.toggle(); fake.grant(); h.toggle()
+        fake.agent = 9001
+        h.verify()
+        XCTAssertEqual(fake.calls.count, 1)
+        XCTAssertFalse(h.isOn)
+    }
+
+    func testTheNewAgentRefusingLeavesItOff() {
+        let h = make()
+        h.toggle(); fake.grant()
+        fake.agent = nil           // MenuBarAgent gone, not yet back
+        h.verify()
+        fake.refuse()
+        XCTAssertFalse(h.isOn)
+        XCTAssertFalse(make().isRemembered, "the checkmark and the setting agree")
+    }
+
+    func testTheRealEnforcerIsMenuBarAgent() {
+        // On macOS 27 MenuBarAgent always runs in a login session.
+        guard ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 else { return }
+        XCTAssertNotNil(AssessmentModeRestrictor().enforcer())
     }
 
     func testWithoutTheFrameworkTheToggleDoesNothing() {

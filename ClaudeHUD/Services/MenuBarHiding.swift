@@ -21,6 +21,15 @@ import Foundation
 // does not open Notification Center (assessment mode blocks it on purpose;
 // dwarvesf/hidden issue 410), and a legacy menu extra with no system item
 // number (Time Machine, Eject; issue 424) hides with the apps.
+//
+// The assertion gives no word when it stops working: MBAssessmentModeAssertion
+// has only init, activate and invalidate (its methods listed on the Mac, 27.2,
+// 2026-11-08), no handler and no state to read. What ends it from outside is
+// MenuBarAgent ending, since that process holds the allow-list, and launchd
+// starts a new one that knows nothing of it. So while it is held the toggle
+// checks every few seconds that the MenuBarAgent it was granted by is still
+// the one running, and when it is not, asks the new one; until that answers,
+// the checkmark is off, as the bar is.
 
 /// A held allow-list; hiding lasts until `invalidate()` or until this process exits.
 protocol MenuBarRestriction: AnyObject {
@@ -32,6 +41,8 @@ protocol MenuBarRestricting: AnyObject {
     /// Shows only these system items and apps. The completion runs on the main queue.
     func activate(allowedSystemItems: [Int], allowedBundleIdentifiers: [String],
                   completion: @escaping (Result<MenuBarRestriction, Error>) -> Void)
+    /// The process that keeps the allow-list (MenuBarAgent's pid), or nil if none runs.
+    func enforcer() -> Int32?
 }
 
 /// The toggle: what it asks of macOS, what it holds, and what it remembers.
@@ -47,6 +58,10 @@ final class MenuBarHiding {
     private let ownBundleIdentifier: String
 
     private var held: MenuBarRestriction?
+    /// The enforcer that granted `held`; another one means the grant is gone.
+    private var heldBy: Int32?
+    private var watch: Timer?
+    static let checkEvery: TimeInterval = 5
     /// Bumped by every request; a grant for an older one is invalidated on arrival.
     private var generation = 0
     private(set) var lastError: Error?
@@ -82,8 +97,24 @@ final class MenuBarHiding {
     /// At quit: release, keep the setting for the next launch.
     func release() {
         generation += 1
+        drop()
+    }
+
+    /// While held: if the MenuBarAgent that granted it has ended, the bar
+    /// shows everything again, so let the checkmark say so and ask again.
+    func verify() {
+        guard held != nil, restrictor.enforcer() != heldBy else { return }
+        NSLog("MenuBarHiding: MenuBarAgent restarted, so its allow-list is gone; asking again")
+        drop()
+        if isRemembered { turnOn() }
+    }
+
+    private func drop() {
+        watch?.invalidate()
+        watch = nil
         held?.invalidate()
         held = nil
+        heldBy = nil
     }
 
     private func turnOn() {
@@ -102,7 +133,16 @@ final class MenuBarHiding {
                 case .success(let restriction):
                     self.held?.invalidate()
                     self.held = restriction
+                    self.heldBy = self.restrictor.enforcer()
                     self.lastError = nil
+                    if self.watch == nil {
+                        let t = Timer(timeInterval: Self.checkEvery, repeats: true) { [weak self] _ in
+                            MainActor.assumeIsolated { self?.verify() }
+                        }
+                        t.tolerance = 1
+                        RunLoop.main.add(t, forMode: .common)
+                        self.watch = t
+                    }
                 case .failure(let error):
                     // Fail open: the bar stays as it was and the checkmark agrees.
                     NSLog("MenuBarHiding: macOS refused the allow-list: \(error.localizedDescription)")
@@ -142,6 +182,17 @@ final class AssessmentModeRestrictor: MenuBarRestricting {
     }()
 
     var isAvailable: Bool { Self.classes != nil }
+
+    /// MenuBarAgent's pid, by process name (libproc, so no AppKit here).
+    func enforcer() -> Int32? {
+        var pids = [Int32](repeating: 0, count: 4096)
+        let n = Int(proc_listallpids(&pids, Int32(pids.count * MemoryLayout<Int32>.size)))
+        var name = [CChar](repeating: 0, count: 64)
+        for pid in pids.prefix(max(0, n)) where pid > 0 {
+            if proc_name(pid, &name, UInt32(name.count)) > 0, String(cString: name) == "MenuBarAgent" { return pid }
+        }
+        return nil
+    }
 
     private final class Handle: MenuBarRestriction {
         private var assertion: NSObject?
