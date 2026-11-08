@@ -111,6 +111,10 @@ window.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 cpal.workspace = true
 tungstenite.workspace = true
+# Contents/Helpers (ClaudeHUD): launched through NSWorkspace
+block2.workspace = true
+objc2.workspace = true
+objc2-foundation.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 shared_library.workspace = true

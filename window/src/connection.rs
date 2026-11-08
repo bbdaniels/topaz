@@ -24,6 +24,8 @@ pub enum ApplicationEvent {
     /// The system wants to open a command in the terminal
     OpenCommandScript(String),
     PerformKeyAssignment(KeyAssignment),
+    /// The application is about to terminate (macOS applicationShouldTerminate)
+    WillTerminate,
 }
 
 pub trait ConnectionOps {

@@ -288,6 +288,7 @@ impl GuiFrontEnd {
                 })
                 .detach();
             }
+            ApplicationEvent::WillTerminate => crate::helpers::stop_all(),
             ApplicationEvent::PerformKeyAssignment(action) => {
                 // We should only get here when there are no windows open
                 // and the user picks an action from the menubar.

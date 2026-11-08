@@ -42,6 +42,7 @@ mod dictation;
 mod download;
 mod frontend;
 mod glyphcache;
+mod helpers;
 mod inputmap;
 mod overlay;
 mod quad;
@@ -778,6 +779,9 @@ fn run_terminal_gui(opts: StartCommand, default_domain_name: Option<String>) -> 
     }
 
     let gui = crate::frontend::try_new()?;
+    // Only the primary GUI process gets here: a second instance handed its
+    // work off above. Its helpers (ClaudeHUD) start once, before any window.
+    crate::helpers::start();
     let activity = Activity::new();
 
     promise::spawn::spawn(async move {
@@ -789,7 +793,11 @@ fn run_terminal_gui(opts: StartCommand, default_domain_name: Option<String>) -> 
     .detach();
 
     maybe_show_configuration_error_window();
-    gui.run_forever()
+    let result = gui.run_forever();
+    // A quit that stops the run loop without going through
+    // applicationShouldTerminate (QuitApplication, the last window closing).
+    crate::helpers::stop_all();
+    result
 }
 
 fn fatal_toast_notification(title: &str, message: &str) {
