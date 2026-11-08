@@ -1018,6 +1018,7 @@ func launchClaudeSession(prompt: String? = nil, resume: String? = nil, name: Str
         await MainActor.run {
             switch outcome {
             case .running(let answer):
+                IMacLive.refresh(force: true)
                 // A session already there may have its tab already: the
                 // WezTerm config opens one for every live iMac session.
                 let title = IMacLauncher.tabTitle(answer)

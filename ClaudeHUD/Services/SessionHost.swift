@@ -268,9 +268,11 @@ enum IMacLive {
 
     /// Start a fetch in the background when the last is older than
     /// `interval` and none is running; `done` runs on the main queue after it.
-    static func refresh(done: @escaping @Sendable () -> Void = {}) {
+    /// `force` skips the interval (not a fetch already running): right after
+    /// a session starts on the iMac, so it is listed in seconds, not ten.
+    static func refresh(force: Bool = false, done: @escaping @Sendable () -> Void = {}) {
         lock.lock()
-        if fetching || (fetchedAt.map { Date().timeIntervalSince($0) < interval } ?? false) {
+        if fetching || (!force && (fetchedAt.map { Date().timeIntervalSince($0) < interval } ?? false)) {
             lock.unlock(); return
         }
         fetching = true

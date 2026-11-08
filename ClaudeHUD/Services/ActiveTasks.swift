@@ -1,8 +1,8 @@
 import Foundation
 
 // The one parser of a project's `Tasks.md` `## Active` section, read by the
-// Projects tab scan (`VaultProject.parse`) and the daily note's task mapping
-// (`VaultManager.extractActiveTasks`). Foundation-only and free of app state
+// Projects tab scan (`VaultProject.parse`), whose open tasks also fill the
+// daily note (`DailyNote.content`). Foundation-only and free of app state
 // so the unit-test bundle compiles this file directly (see project.yml →
 // ClaudeHUDTests).
 
@@ -70,7 +70,7 @@ enum ActiveTasks {
 
     /// One open (not-done) task as the rest of the app counts it: a flat
     /// task, or a child of a heading group. THE enumeration shared by the
-    /// daily note's task mapping and the Projects-tab due chip, so they can
+    /// daily note's task list and the Projects-tab due chip, so they can
     /// never disagree about which items are tasks.
     struct OpenItem {
         /// The task's own text (a child's raw `**Title**: body` one-liner).
@@ -212,8 +212,7 @@ enum ActiveTasks {
     /// (title, body) without assuming the closing `**` sits on one line —
     /// it scans the whole string. Falls back to (wholeString, "") when
     /// there is no leading bold. Single source of truth for bullet-title
-    /// extraction, shared by the parser and the daily note's task mapping
-    /// (`VaultManager.extractActiveTasks`).
+    /// extraction, shared by the parser and `openItems`.
     static func splitBullet(_ s: String) -> (title: String, body: String) {
         let t = s.trimmingCharacters(in: .whitespaces)
         if t.hasPrefix("**") {

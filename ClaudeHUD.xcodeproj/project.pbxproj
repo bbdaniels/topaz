@@ -56,7 +56,6 @@
 		749DC764D831EF175567E9FC /* VaultTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B280310DE38541F7B2CD6849 /* VaultTabView.swift */; };
 		763D915CF0FBE368DEE6A12F /* HotkeyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D906C2A42EF5CC6963D24D58 /* HotkeyService.swift */; };
 		7A03189EDE7B0B322909FCCC /* ActiveTasksDueDateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50033B8E71A69F51D0C4867F /* ActiveTasksDueDateTests.swift */; };
-		8123A352C357703346F0F832 /* TodoItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E0D64CF3689B9D885F9F313 /* TodoItem.swift */; };
 		815353343C4BC778548C4338 /* LibraryRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF071C0FD812AE7E6F9A7928 /* LibraryRow.swift */; };
 		81D79855CC684E2706696199 /* UsageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAA7DC5B4103396ACB2B5F3F /* UsageService.swift */; };
 		833788A1F492EE5E46D352EE /* LibraryItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44C3321F95137F8014F94C16 /* LibraryItem.swift */; };
@@ -128,7 +127,6 @@
 		56D94EDE8FDD699B87FB0898 /* HostProcsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostProcsTests.swift; sourceTree = "<group>"; };
 		58276C1EA3EC3682B1C6FE36 /* ClaudeHUD.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ClaudeHUD.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		59E8596B647276D0A1586779 /* SecretsVault.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretsVault.swift; sourceTree = "<group>"; };
-		5E0D64CF3689B9D885F9F313 /* TodoItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodoItem.swift; sourceTree = "<group>"; };
 		5E611364C25404DC27D5D60B /* ClaudeHUDApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeHUDApp.swift; sourceTree = "<group>"; };
 		620FB4690A1A9D7786A56696 /* JSONRPCTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONRPCTypes.swift; sourceTree = "<group>"; };
 		644D06080D4C60BFCF2637FE /* VaultSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultSettings.swift; sourceTree = "<group>"; };
@@ -255,7 +253,6 @@
 				44C3321F95137F8014F94C16 /* LibraryItem.swift */,
 				94F002554690052369E931AE /* NoteFile.swift */,
 				7C833E15743B893B9F72BC7D /* SkillFile.swift */,
-				5E0D64CF3689B9D885F9F313 /* TodoItem.swift */,
 				17F46482310A6FD0D702F970 /* UsageModels.swift */,
 				644D06080D4C60BFCF2637FE /* VaultSettings.swift */,
 			);
@@ -596,7 +593,6 @@
 				AF44EBFA0AB87F2490D412F9 /* StdioMCPClient.swift in Sources */,
 				2DC1704ACE2F286704A1DF5C /* TerminalService.swift in Sources */,
 				9C3637274F96736D202895D8 /* TodayView.swift in Sources */,
-				8123A352C357703346F0F832 /* TodoItem.swift in Sources */,
 				0A4D8DD96DCA844462BAAE4B /* Tooltip.swift in Sources */,
 				9092A413B34B317EF735C5AB /* TranscriptHead.swift in Sources */,
 				070D53ACBBF518BCE8753209 /* UsageBadge.swift in Sources */,

@@ -25,8 +25,6 @@ class AppState: ObservableObject {
     }
 
     func setup() async {
-        vaultManager.ensureDailyNote(for: Date())
-
         // Reap stale background sessions. The daemon never flushes a terminal
         // state when a worker dies abnormally, so `~/.claude/jobs` fills with
         // sessions frozen at "blocked" that `claude agents` renders as
@@ -46,6 +44,7 @@ class AppState: ObservableObject {
         let vaultURL = vaultManager.currentVault.map { URL(fileURLWithPath: $0.path) }
         vaultIngestService.start(vaultPath: vaultURL)
         vaultProjectService.start(vaultPath: vaultURL)
+        Task { await vaultManager.ensureDailyNote(for: Date(), projects: vaultProjectService) }
         sessionHistoryService.vaultProjects = vaultProjectService
         sessionHistoryService.liveSessionIds = { [weak agentsService] in
             Set(agentsService?.agents.filter(\.isAlive).compactMap(\.sessionId) ?? [])

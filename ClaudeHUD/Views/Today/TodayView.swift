@@ -37,9 +37,6 @@ struct TodayView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task(id: dayOffset) {
-            vaultManager.ensureDailyNote(for: selectedDate)
-        }
     }
 
     /// Slim date navigator — prev/next day + a reset-to-today button. The
@@ -99,6 +96,7 @@ struct TodayView: View {
 private struct DailyNoteSection: View {
     let date: Date
     @EnvironmentObject var vaultManager: VaultManager
+    @EnvironmentObject var appState: AppState
     @Environment(\.fontScale) private var scale
     @AppStorage("today.dailyNoteCollapsed") private var collapsed = false
     @State private var content: String? = nil
@@ -276,7 +274,12 @@ private struct DailyNoteSection: View {
                     .padding(.bottom, 10)
             }
         }
-        .task(id: date) { loadContent() }
+        .task(id: date) {
+            loadContent()
+            guard content == nil else { return }
+            await vaultManager.ensureDailyNote(for: date, projects: appState.vaultProjectService)
+            loadContent()
+        }
     }
 
     private var header: some View {
@@ -357,8 +360,8 @@ private struct DailyNoteSection: View {
     }
 
     /// Append `- HH:MM <text>` to today's daily note. Creates the file
-    /// if missing (rare — `vaultManager.ensureDailyNote` runs on the
-    /// `.task(id: dayOffset)` earlier and would have populated it).
+    /// if missing (rare: `vaultManager.ensureDailyNote` runs in this
+    /// section's `.task(id: date)` and would have populated it).
     private func append() {
         let text = capture.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty, isToday, let path = dailyNotePath else { return }

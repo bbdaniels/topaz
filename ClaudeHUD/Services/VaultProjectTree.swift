@@ -24,6 +24,10 @@ struct VaultProject: Identifiable, Hashable {
     let parent: String?
     /// Soonest-due open task in `## Active`, read during the scan.
     var nextDue: ActiveTasks.NextDue? = nil
+    /// Each open task in `## Active`, in file order (`ActiveTasks.openItems`'
+    /// raw titles), read during the scan so the daily note needs no second
+    /// read of every `Tasks.md`.
+    var openTasks: [String] = []
 
     /// First absolute non-glob `cwds:` entry (for "New session here").
     var primaryCwd: String? {
@@ -85,6 +89,7 @@ extension VaultProject {
     static func parse(folder: URL, tasksContent content: String) -> VaultProject {
         let fm = Frontmatter(content)
         let updatedRaw = fm.scalar("updated") ?? ""
+        let tasks = ActiveTasks.parse(from: content)
         return VaultProject(
             folder: folder,
             name: folder.lastPathComponent,
@@ -94,7 +99,8 @@ extension VaultProject {
             cwds: fm.list("cwds"),
             manuscript: fm.scalar("manuscript"),
             parent: fm.scalar("parent"),
-            nextDue: ActiveTasks.nextDue(in: ActiveTasks.parse(from: content))
+            nextDue: ActiveTasks.nextDue(in: tasks),
+            openTasks: ActiveTasks.openItems(in: tasks).map(\.rawTitle)
         )
     }
 
@@ -104,6 +110,66 @@ extension VaultProject {
     static func readTasks(inFolder folderPath: String) -> String? {
         guard let data = FileManager.default.contents(atPath: "\(folderPath)/Tasks.md") else { return nil }
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+// MARK: - Vault watch
+
+/// Which FSEvents batches change the project list. A project is a top-level
+/// folder with a `Tasks.md`, so the list changes when a `Tasks.md` is written
+/// or when a top-level folder is created, removed or renamed. A folder moved
+/// into the vault is reported as the folder alone, never the `Tasks.md` in
+/// it (probed on the Mac, 2026-11-08), so a path-ends-in-Tasks.md filter
+/// alone missed it.
+enum VaultWatch {
+    /// MustScanSubDirs, UserDropped, KernelDropped, RootChanged: FSEvents
+    /// lost track, so only a scan can say what changed.
+    static let lostTrack: UInt32 = 0x01 | 0x02 | 0x04 | 0x20
+
+    /// `vault` is the watched root as FSEvents reports it (symlinks resolved).
+    static func needsRescan(paths: [String], flags: [UInt32], vault: String) -> Bool {
+        if flags.contains(where: { $0 & lostTrack != 0 }) { return true }
+        let root = vault.hasSuffix("/") ? String(vault.dropLast()) : vault
+        return paths.contains { path in
+            guard path.hasPrefix(root + "/") else { return false }
+            let parts = path.dropFirst(root.count + 1).split(separator: "/", omittingEmptySubsequences: true)
+            guard let top = parts.first, !top.hasPrefix(".") else { return false }
+            if parts.count == 1 { return true }
+            return parts.count == 2 && parts[1] == "Tasks.md"
+        }
+    }
+}
+
+// MARK: - Daily note
+
+/// The generated daily note: each project's open tasks, from the scan.
+enum DailyNote {
+    /// Folders that are not projects, never listed.
+    static let skipFolders: Set<String> = ["Templates", "Daily Notes", "Attachments", "Assets", "Archive"]
+    /// At most this many tasks per project.
+    static let perProject = 8
+
+    static func content(for date: Date, projects: [VaultProject], calendar: Calendar = .current) -> String {
+        let fmt = DateFormatter()
+        fmt.calendar = calendar
+        fmt.timeZone = calendar.timeZone
+        fmt.locale = Locale(identifier: "en_US_POSIX")
+        fmt.dateFormat = "EEEE, MMMM d, yyyy"
+        var out = "# \(fmt.string(from: date))\n\n"
+        let listed = projects
+            .filter { !skipFolders.contains($0.name) && !$0.openTasks.isEmpty }
+            .sorted { $0.name < $1.name }
+        if listed.isEmpty {
+            out += "- [ ] \n"
+        } else {
+            out += "## Open Items\n\n"
+            for p in listed {
+                out += "### \(p.name)\n"
+                for t in p.openTasks.prefix(perProject) { out += "- [ ] \(t)\n" }
+                out += "\n"
+            }
+        }
+        return out + "## Notes\n\n"
     }
 }
 

@@ -152,107 +152,26 @@ class VaultManager: ObservableObject {
 
     // MARK: - Daily Note Generation
 
-    /// Create today's daily note if it doesn't exist, populated with unchecked todos from project notes
-    func ensureDailyNote(for date: Date) {
-        guard let vault = currentVault else { return }
-        guard Calendar.current.isDateInToday(date) else { return }
-
-        let vaultPath = vault.path
-        let fm = FileManager.default
+    /// Create today's daily note when it is missing, listing each project's
+    /// open tasks (`DailyNote.content`). The tasks come from the Projects
+    /// scan, which runs off the main thread; until 2026-11-08 this read every
+    /// project's task file again, on the main thread.
+    func ensureDailyNote(for date: Date, projects service: VaultProjectService) async {
+        guard let vault = currentVault, Calendar.current.isDateInToday(date) else { return }
         let fmt = DateFormatter()
         fmt.dateFormat = "yyyy-MM-dd"
         let dateStr = fmt.string(from: date)
-        let dailyDir = (vaultPath as NSString).appendingPathComponent("Daily Notes")
+        let dailyDir = (vault.path as NSString).appendingPathComponent("Daily Notes")
         let dailyPath = (dailyDir as NSString).appendingPathComponent("\(dateStr).md")
-
-        // Don't overwrite existing
-        guard !fm.fileExists(atPath: dailyPath) else { return }
-
-        // Ensure Daily Notes directory exists
-        try? fm.createDirectory(atPath: dailyDir, withIntermediateDirectories: true)
-
-        // Scan all top-level vault folders for unchecked todos
-        let skipFolders: Set<String> = ["Templates", "Daily Notes", "Attachments", "Assets", "Archive"]
-        guard let folders = try? fm.contentsOfDirectory(atPath: vaultPath) else { return }
-        var sections: [(project: String, todos: [String])] = []
-
-        for folder in folders.sorted() {
-            let folderPath = (vaultPath as NSString).appendingPathComponent(folder)
-            var isDir: ObjCBool = false
-            guard fm.fileExists(atPath: folderPath, isDirectory: &isDir), isDir.boolValue else { continue }
-            guard !folder.hasPrefix("."), !skipFolders.contains(folder) else { continue }
-
-            // Use the project's task file (Tasks.md preferred, with fallback)
-            guard let taskFile = findTaskFile(in: folderPath) else { continue }
-            let taskItems = extractActiveTasks(from: taskFile, noteName: folder, projectName: folder)
-            let projectTodos = taskItems.map(\.title)
-
-            if !projectTodos.isEmpty {
-                sections.append((folder, projectTodos))
-            }
-        }
-
-        // Build the daily note content
-        let displayFmt = DateFormatter()
-        displayFmt.dateFormat = "EEEE, MMMM d, yyyy"
-        var content = "# \(displayFmt.string(from: date))\n\n"
-
-        if sections.isEmpty {
-            content += "- [ ] \n"
-        } else {
-            content += "## Open Items\n\n"
-            for section in sections {
-                content += "### \(section.project)\n"
-                for todo in section.todos.prefix(8) {
-                    content += "- [ ] \(todo)\n"
-                }
-                content += "\n"
-            }
-        }
-
-        content += "## Notes\n\n"
-
-        try? content.write(toFile: dailyPath, atomically: true, encoding: .utf8)
-        logger.info("Created daily note: \(dateStr) with \(sections.map(\.todos.count).reduce(0, +)) todos from \(sections.count) projects")
-    }
-
-    // MARK: - Tasks.md Support
-
-    /// Known task file names in priority order
-    private static let taskFileNames = [
-        "Tasks.md",
-        "Action Items.md",
-        "To-Do List.md",
-        "Revision To-Do List.md"
-    ]
-
-    /// Find the task file in a project folder (Tasks.md preferred, with legacy fallback)
-    func findTaskFile(in folderPath: String) -> String? {
         let fm = FileManager.default
-        // Check standard names first
-        for name in Self.taskFileNames {
-            let path = (folderPath as NSString).appendingPathComponent(name)
-            if fm.fileExists(atPath: path) { return path }
-        }
-        // Fallback: "Revisions for *.md" pattern
-        if let files = try? fm.contentsOfDirectory(atPath: folderPath) {
-            for file in files where file.hasPrefix("Revisions for ") && file.hasSuffix(".md") {
-                return (folderPath as NSString).appendingPathComponent(file)
-            }
-        }
-        return nil
-    }
-
-    /// Parse **bold**: prefix from task text, returning (boldTitle, cleanText)
-    private func parseBoldTitle(_ text: String) -> (boldTitle: String?, cleanText: String) {
-        // Match **Title**: rest of text
-        guard let starRange = text.range(of: "**"),
-              let endRange = text.range(of: "**:", range: starRange.upperBound..<text.endIndex) else {
-            return (nil, text)
-        }
-        let title = String(text[starRange.upperBound..<endRange.lowerBound])
-        let rest = String(text[endRange.upperBound...]).trimmingCharacters(in: .whitespaces)
-        return (title, rest.isEmpty ? title : text)
+        guard !fm.fileExists(atPath: dailyPath) else { return }
+        let projects = await service.currentProjects()
+        // The scan took a moment: another caller may have written it since.
+        guard !fm.fileExists(atPath: dailyPath) else { return }
+        try? fm.createDirectory(atPath: dailyDir, withIntermediateDirectories: true)
+        let content = DailyNote.content(for: date, projects: projects)
+        try? content.write(toFile: dailyPath, atomically: true, encoding: .utf8)
+        logger.info("Created daily note: \(dateStr) from \(projects.count) projects")
     }
 
     // MARK: - New project scaffold
@@ -377,70 +296,6 @@ class VaultManager: ObservableObject {
         } catch {
             return .failure(.writeFailed(error.localizedDescription))
         }
-    }
-
-    /// Extract the actionable tasks from a project's task file as `TodoItem`s
-    /// for the generated daily note's "Open Items".
-    ///
-    /// `Tasks.md` is routed through the heading-aware parser
-    /// (`ActiveTasks.parse`, enumerated by `ActiveTasks.openItems`): `### ` headings become
-    /// sections, the (unchecked) bullets under them become tasks, nested
-    /// detail folds into its parent (counted once), `- **Title**`
-    /// non-checkbox tasks are included, and done items are skipped. Each
-    /// emitted item keeps its source line.
-    ///
-    /// Legacy flat task files (`Action Items.md`, `Revisions for *.md`, …)
-    /// have no `## Active` section, so they keep the old line-by-line scan.
-    func extractActiveTasks(from filePath: String, noteName: String, projectName: String?) -> [TodoItem] {
-        guard let content = try? String(contentsOfFile: filePath, encoding: .utf8) else { return [] }
-        let canonicalProject = projectName ?? noteName
-
-        guard filePath.hasSuffix("/Tasks.md") else {
-            return extractLegacyTasks(content: content, filePath: filePath, project: canonicalProject)
-        }
-
-        return ActiveTasks.openItems(in: ActiveTasks.parse(from: content)).map { item in
-            TodoItem(
-                title: item.rawTitle,
-                source: .obsidian(grouping: canonicalProject),
-                dueDate: item.dueDate, isOverdue: item.dueDate.map { ActiveTasks.isOverdue($0) } ?? false,
-                priority: 0,
-                reminderIdentifier: nil,
-                obsidianFilePath: filePath,
-                obsidianLineNumber: item.line,
-                projectName: canonicalProject,
-                sectionHeading: item.section,
-                boldTitle: item.display
-            )
-        }
-    }
-
-    /// Old scan for legacy (non-`Tasks.md`) flat task files: every unchecked
-    /// list line is a task, `### Heading` lines are section labels.
-    private func extractLegacyTasks(content: String, filePath: String, project: String) -> [TodoItem] {
-        let lines = content.components(separatedBy: "\n")
-        var items: [TodoItem] = []
-        var currentSection: String? = nil
-        for (idx, line) in lines.enumerated() {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("### ") { currentSection = String(trimmed.dropFirst(4)); continue }
-            guard ObsidianMarkdownView.isListLine(line) else { continue }
-            let parsed = ObsidianMarkdownView.parseListItem(line, lineNumber: idx)
-            guard parsed.checkState == false else { continue }
-            let (boldTitle, _) = parseBoldTitle(parsed.text)
-            items.append(TodoItem(
-                title: parsed.text,
-                source: .obsidian(grouping: project),
-                dueDate: nil, isOverdue: false, priority: 0,
-                reminderIdentifier: nil,
-                obsidianFilePath: filePath,
-                obsidianLineNumber: idx,
-                projectName: project,
-                sectionHeading: currentSection,
-                boldTitle: boldTitle
-            ))
-        }
-        return items
     }
 
     // MARK: - Private

@@ -587,6 +587,7 @@ final class AgentsService: ObservableObject {
                     await MainActor.run {
                         switch outcome {
                         case .running(let answer):
+                            IMacLive.refresh(force: true)
                             let title = IMacLauncher.tabTitle(answer)
                             WezTerm.open(title: title, argv: IMacLauncher.attachArgv(answer), cwd: dir,
                                          find: { $0.first { $0.tabTitle == title } })

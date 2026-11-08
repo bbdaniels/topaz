@@ -44,15 +44,45 @@ final class VaultProjectService: ObservableObject {
         self.vaultPath = vaultPath
         refresh()
         watch(vaultPath)
+        startFallback()
     }
+
+    /// A rescan every `fallbackInterval` whatever FSEvents says, so a missed
+    /// or dropped event costs at most a minute, never a stale list until the
+    /// tab is reopened. Idempotent.
+    static let fallbackInterval: TimeInterval = 60
+    private var fallback: DispatchSourceTimer?
+
+    private func startFallback() {
+        guard fallback == nil else { return }
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now() + Self.fallbackInterval, repeating: Self.fallbackInterval,
+                   leeway: .seconds(5))
+        t.setEventHandler { [weak self] in Task { @MainActor in self?.refresh() } }
+        t.resume()
+        fallback = t
+    }
+
+    /// The newest scan's projects: waits for the scan in flight, or runs one
+    /// when none has published. For callers outside the Projects tab (the
+    /// daily note) that need the list without reading the vault themselves.
+    func currentProjects() async -> [Project] {
+        if let scanTask { await scanTask.value }
+        if projects.isEmpty, vaultPath != nil { await refresh().value }
+        return projects
+    }
+    private var scanTask: Task<Void, Never>?
 
     // MARK: - Watching the vault
 
     /// FSEvents stream over the vault. Any write to a `Tasks.md` (a session
     /// ticking a task, the 15-minute sync pulling another machine's edits, the
     /// daily review) re-scans, so the Projects tab never shows an overdue task
-    /// that the vault has already closed or re-dated. Before 2026-10-26 the
-    /// list refreshed only when the tab appeared.
+    /// that the vault has already closed or re-dated, and so does a top-level
+    /// folder created, removed or renamed, or a batch FSEvents dropped
+    /// (`VaultWatch.needsRescan`; 2026-11-08, a project folder that arrived
+    /// whole was reported as the folder alone and never listed). Before
+    /// 2026-10-26 the list refreshed only when the tab appeared.
     private var eventStream: FSEventStreamRef?
 
     private func watch(_ vault: URL?) {
@@ -63,15 +93,22 @@ final class VaultProjectService: ObservableObject {
             eventStream = nil
         }
         guard let vault else { return }
+        // FSEvents reports real paths, so compare against the resolved root.
+        watchedRoot = realpath(vault.path, nil).map { p in defer { free(p) }; return String(cString: p) }
+            ?? vault.path
         var context = FSEventStreamContext(
             version: 0, info: Unmanaged.passUnretained(self).toOpaque(),
             retain: nil, release: nil, copyDescription: nil)
-        let callback: FSEventStreamCallback = { _, info, _, paths, _, _ in
+        let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
             guard let info,
-                  let changed = unsafeBitCast(paths, to: NSArray.self) as? [String],
-                  changed.contains(where: VaultProjectService.isTasksFile) else { return }
+                  let changed = unsafeBitCast(paths, to: NSArray.self) as? [String] else { return }
             let service = Unmanaged<VaultProjectService>.fromOpaque(info).takeUnretainedValue()
-            Task { @MainActor in service.refresh() }
+            let flagList = (0..<count).map { UInt32(flags[$0]) }
+            // The stream's queue is main, so the service's state is safe here.
+            MainActor.assumeIsolated {
+                guard VaultWatch.needsRescan(paths: changed, flags: flagList, vault: service.watchedRoot) else { return }
+                service.refresh()
+            }
         }
         // A one-second latency coalesces a sync's burst of writes into one
         // scan; `refresh()`'s generation guard handles any overlap.
@@ -88,10 +125,7 @@ final class VaultProjectService: ObservableObject {
         eventStream = stream
     }
 
-    /// A project's `Tasks.md`, not a copy inside `.git` or `.obsidian`.
-    nonisolated static func isTasksFile(_ path: String) -> Bool {
-        path.hasSuffix("/Tasks.md") && !path.contains("/.git/") && !path.contains("/.obsidian/")
-    }
+    private var watchedRoot = ""
 
     /// Re-scan the vault. Call from view `onAppear` or explicitly after
     /// the vault changes. NOT cheap: it reads every project's `Tasks.md` in
@@ -108,14 +142,17 @@ final class VaultProjectService: ObservableObject {
             projects = []
             return Task {}
         }
-        return Task { [weak self] in
+        let task = Task { [weak self] in
             let out = await Task.detached(priority: .userInitiated) {
                 VaultProject.scan(vaultPath: vault)
             }.value
             guard let self, generation == self.scanGeneration else { return }
             self.projects = out
+            self.scanTask = nil
             logger.info("vault projects refreshed: \(out.count) total, \(out.filter { $0.isActive }.count) active")
         }
+        scanTask = task
+        return task
     }
 
     /// Insert (or replace) one project parsed from `folder`, re-sorted into
@@ -232,7 +269,7 @@ final class VaultProjectService: ObservableObject {
         await primeResolution(forCwds: Set((agents.map(\.cwd) + lostTreeCwds)
             .map { SessionFiling.repoCwd($0) }).filter { !$0.isEmpty })
         let live = agents.compactMap { a in
-            a.sessionId.map { (sessionId: $0, cwd: a.cwd, host: SessionHost.mac) }
+            a.sessionId.map { (sessionId: $0, cwd: a.cwd, host: a.isIMac ? SessionHost.iMac : SessionHost.mac) }
         }
         await primeFiling(sessions: history + live, cwdCounts: cwdCounts)
     }

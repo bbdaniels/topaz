@@ -264,3 +264,91 @@ final class SessionLightTests: XCTestCase {
         XCTAssertEqual(IMacLauncher.endFailure(status: 255, stdout: Data()), "the iMac did not answer")
     }
 }
+
+/// What rescans the Projects list, and the daily note built from the scan.
+final class VaultWatchTests: XCTestCase {
+
+    // MARK: Vault watch
+
+    func testANewOrRenamedProjectFolderRescans() {
+        let vault = "/Users/b/Projects/obsidian"
+        // A folder moved into the vault is reported as the folder alone, not
+        // the Tasks.md inside it (probed on the Mac, 2026-11-08).
+        XCTAssertTrue(VaultWatch.needsRescan(paths: [vault + "/Topaz"], flags: [0x20800], vault: vault))
+        XCTAssertTrue(VaultWatch.needsRescan(paths: [vault + "/Topaz/Tasks.md"], flags: [0x19100], vault: vault))
+        XCTAssertTrue(VaultWatch.needsRescan(paths: [vault + "/Old Name"], flags: [0x20800], vault: vault + "/"))
+    }
+
+    func testOtherVaultWritesDoNotRescan() {
+        let vault = "/Users/b/Projects/obsidian"
+        XCTAssertFalse(VaultWatch.needsRescan(paths: [vault + "/Topaz/Dashboard.md"], flags: [0x19100], vault: vault))
+        XCTAssertFalse(VaultWatch.needsRescan(paths: [vault + "/.git/index", vault + "/.git"], flags: [0x10000, 0x20000], vault: vault))
+        XCTAssertFalse(VaultWatch.needsRescan(paths: [vault + "/.obsidian/workspace.json"], flags: [0x10000], vault: vault))
+        XCTAssertFalse(VaultWatch.needsRescan(paths: [vault + "/Topaz/.git/x/Tasks.md"], flags: [0x10000], vault: vault))
+        XCTAssertFalse(VaultWatch.needsRescan(paths: [vault + "/Daily Notes/2026-11-08.md"], flags: [0x10000], vault: vault))
+    }
+
+    func testDroppedEventsRescan() {
+        // MustScanSubDirs, UserDropped, KernelDropped, RootChanged: FSEvents
+        // could not say what changed, so the scan must look.
+        for flag: UInt32 in [0x01, 0x02, 0x04, 0x20] {
+            XCTAssertTrue(VaultWatch.needsRescan(paths: ["/Users/b/Projects/obsidian/Topaz/x"], flags: [flag],
+                                                 vault: "/Users/b/Projects/obsidian"), "flag \(flag)")
+        }
+    }
+
+    // MARK: Daily note from the scan
+
+    func testTheScanKeepsEachProjectsOpenTasks() {
+        let p = VaultProject.parse(folder: URL(fileURLWithPath: "/vault/Cayda"), tasksContent: """
+        ---
+        status: active
+        ---
+        ## Active
+        - [ ] **First**: do it
+        - [x] Done already
+        - [ ] Second
+        ## Completed
+        - [ ] Not active
+        """)
+        XCTAssertEqual(p.openTasks, ["**First**: do it", "Second"])
+    }
+
+    func testTheDailyNoteListsOpenTasksByProjectName() {
+        func with(_ name: String, _ tasks: [String]) -> VaultProject {
+            var p = VaultProject(folder: URL(fileURLWithPath: "/vault/\(name)"), name: name, status: "active",
+                                 updated: nil, cwds: [], manuscript: nil, parent: nil)
+            p.openTasks = tasks; return p
+        }
+        let date = Date(timeIntervalSince1970: 1_762_560_000) // Saturday, November 8, 2025 UTC
+        var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "UTC")!
+        let note = DailyNote.content(for: date, projects: [
+            with("Zeta", ["z1"]), with("Alpha", (1...10).map { "a\($0)" }),
+            with("Empty", []), with("Templates", ["skip me"]),
+        ], calendar: cal)
+        XCTAssertEqual(note, """
+        # Saturday, November 8, 2025
+
+        ## Open Items
+
+        ### Alpha
+        - [ ] a1
+        - [ ] a2
+        - [ ] a3
+        - [ ] a4
+        - [ ] a5
+        - [ ] a6
+        - [ ] a7
+        - [ ] a8
+
+        ### Zeta
+        - [ ] z1
+
+        ## Notes
+
+
+        """)
+        XCTAssertEqual(DailyNote.content(for: date, projects: [with("Empty", [])], calendar: cal),
+                       "# Saturday, November 8, 2025\n\n- [ ] \n## Notes\n\n")
+    }
+}
