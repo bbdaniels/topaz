@@ -46,9 +46,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         panelController = HUDPanelController(appState: appState)
         setupStatusItem()
-        appState.processMonitor.onUpdate = { [weak self] report in
-            self?.updateOrphanBadge(report.orphans.count)
-        }
 
         appState.hotkeyService.register { [weak self] in
             self?.panelController?.toggle()
@@ -94,22 +91,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var sessionsForMenu: [SessionMenuEntry] = []
     private var backgroundJobsForMenu: [ClassifiedWorker] = []
     private var orphansForMenu: [ClassifiedWorker] = []
-
-    /// Orphan count beside the menu-bar icon; plain icon when there are none.
-    private func updateOrphanBadge(_ n: Int) {
-        guard let item = statusItem, let button = item.button else { return }
-        if n > 0 {
-            item.length = NSStatusItem.variableLength
-            button.imagePosition = .imageLeading
-            button.title = "\(n)"
-            button.toolTip = "\(n) orphaned Claude process\(n == 1 ? "" : "es"): right-click to review"
-        } else {
-            button.title = ""
-            button.imagePosition = .imageOnly
-            item.length = NSStatusItem.squareLength
-            button.toolTip = nil
-        }
-    }
 
     /// Files the live roster first, as the Projects tab does while it is
     /// shown, so the menu's Open Sessions and the panel file every session
@@ -200,7 +181,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// from a fresh scan. The warm spare and attached sessions are counted in
     /// the footer only.
     private func addProcessSections(to menu: NSMenu) {
-        let report = appState.processMonitor.refreshNow()
+        let report = appState.processMonitor.scan()
         backgroundJobsForMenu = report.backgroundJobs
         orphansForMenu = report.orphans
         let now = Date()

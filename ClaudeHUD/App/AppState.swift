@@ -34,11 +34,6 @@ class AppState: ObservableObject {
         // rather than only on Agents-tab open is what makes it automatic.
         AgentsService.reapStaleAtLaunch()
 
-        // Background jobs and orphaned workers for the menu-bar menu: a scan
-        // every 15 minutes (and on each menu open). Read-only; closing an
-        // orphan is always a confirmed click.
-        processMonitor.start()
-
         // Live sessions from launch, not from the first look at the panel:
         // each reload also writes the WezTerm tab lights
         // (`WezTerm.publishLights`), which must be current whether or not the

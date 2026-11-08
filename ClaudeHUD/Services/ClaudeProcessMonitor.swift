@@ -3,53 +3,22 @@ import os
 
 private let logger = Logger(subsystem: "com.claudehud", category: "ClaudeProcessMonitor")
 
-/// Keeps a current `ClaudeProcessReport` for the menu-bar menu: background
-/// jobs, orphans and the total memory of Claude Code processes.
+/// Scans Claude Code processes for the menu-bar menu: background jobs,
+/// orphans and their total memory.
 ///
-/// Scans every 15 minutes and whenever the menu opens (a scan is one `ps`,
-/// one `lsof` over the workers and a few small JSON reads, about 0.1 s).
+/// Scans only when the menu opens (a scan is one `ps`, one `lsof` over the
+/// workers and a few small JSON reads, about 0.1 s); nothing else reads a
+/// scan, so there is no timer (the 15-minute timer fed only the orphan count
+/// beside the menu-bar icon, removed 2026-11-08).
 /// It NEVER closes anything by itself. Close is `close(_:)`, reached only from
 /// a confirmed menu click: on 2026-10-05 a process that looked orphaned was a
 /// live 8-day monitoring job.
 @MainActor
-final class ClaudeProcessMonitor: ObservableObject {
-    @Published private(set) var report = ClaudeProcessReport()
-    /// Called on the main actor after every scan (the status-item badge).
-    var onUpdate: ((ClaudeProcessReport) -> Void)?
-
-    static let interval: TimeInterval = 15 * 60
-    private var timer: DispatchSourceTimer?
-    private var scanning = false
-
-    func start() {
-        guard timer == nil else { return }
-        let t = DispatchSource.makeTimerSource(queue: .main)
-        t.schedule(deadline: .now(), repeating: Self.interval, leeway: .seconds(30))
-        t.setEventHandler { [weak self] in Task { @MainActor in await self?.refresh() } }
-        t.resume()
-        timer = t
-    }
-
+final class ClaudeProcessMonitor {
     /// Synchronous scan for the menu, which is built synchronously. Cheap
     /// enough (about 0.1 s) to run on the click.
-    @discardableResult
-    func refreshNow() -> ClaudeProcessReport {
-        let r = ClaudeProcessSnapshot.capture()
-        publish(r)
-        return r
-    }
-
-    func refresh() async {
-        guard !scanning else { return }
-        scanning = true
-        defer { scanning = false }
-        let r = await Task.detached(priority: .utility) { ClaudeProcessSnapshot.capture() }.value
-        publish(r)
-    }
-
-    private func publish(_ r: ClaudeProcessReport) {
-        report = r
-        onUpdate?(r)
+    func scan() -> ClaudeProcessReport {
+        ClaudeProcessSnapshot.capture()
     }
 
     /// Close one orphan, after the user confirmed it.
@@ -68,14 +37,13 @@ final class ClaudeProcessMonitor: ObservableObject {
         if let short = w.short {
             let r = await AgentsService.stopAndWait(short)
             if r.code != 0 { logger.notice("claude stop \(short, privacy: .public) exited \(r.code)") }
-            if await Self.waitGone(list, seconds: 5) { await refresh(); return }
+            if await Self.waitGone(list, seconds: 5) { return }
         }
         Self.signal(list, SIGTERM)
         if !(await Self.waitGone(list, seconds: 5)) {
             Self.signal(list, SIGKILL)
             _ = await Self.waitGone(list, seconds: 2)
         }
-        await refresh()
     }
 
     /// Rows of `list` still running the same command.
