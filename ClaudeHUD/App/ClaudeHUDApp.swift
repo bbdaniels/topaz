@@ -36,6 +36,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState()
     private var panelController: HUDPanelController?
     private var statusItem: NSStatusItem?
+    /// "Hide Other Menu Bar Items": macOS 27's allow-list, held while on.
+    private let menuBarHiding = MenuBarHiding()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // A regular app, with a Dock icon and a Cmd-Tab entry (Ben, 2026-11-06).
@@ -46,6 +48,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         panelController = HUDPanelController(appState: appState)
         setupStatusItem()
+        menuBarHiding.restore()
 
         appState.hotkeyService.register { [weak self] in
             self?.panelController?.toggle()
@@ -121,6 +124,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             action: #selector(toggleScreenCover),
             keyEquivalent: "c"
         ).target = self
+
+        menu.addItem(menuBarHidingItem())
 
         menu.addItem(.separator())
 
@@ -275,6 +280,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await appState.processMonitor.close(w) }
     }
 
+    /// Checked while hiding. Disabled where MenuBarClientCore is missing
+    /// (before macOS 27, or a release that moved it).
+    private func menuBarHidingItem() -> NSMenuItem {
+        let item = NSMenuItem(title: "Hide Other Menu Bar Items", action: #selector(toggleMenuBarHiding), keyEquivalent: "")
+        item.target = self
+        item.state = menuBarHiding.isOn ? .on : .off
+        if !menuBarHiding.isAvailable {
+            item.action = nil
+            item.isEnabled = false
+            item.toolTip = "Needs macOS 27's menu bar allow-list, which this macOS does not have."
+        } else if let error = menuBarHiding.lastError, !menuBarHiding.isOn {
+            item.toolTip = "macOS refused the last request: \(error.localizedDescription)"
+        } else {
+            item.toolTip = "Shows only ClaudeHUD's and the system's items; the order you set with Cmd-drag is kept. While on, clicking the clock does not open Notification Center."
+        }
+        return item
+    }
+
+    @objc private func toggleMenuBarHiding() {
+        menuBarHiding.toggle()
+    }
+
     @objc private func toggleScreenCover() {
         appState.screenCoverService.toggle()
     }
@@ -282,5 +309,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         appState.hotkeyService.unregister()
         appState.screenCoverService.forceUncover()
+        menuBarHiding.release()
     }
 }

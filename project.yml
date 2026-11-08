@@ -52,6 +52,7 @@ targets:
       - path: ClaudeHUD/Services/HostProcs.swift
       - path: ClaudeHUD/Services/WezTermService.swift
       - path: ClaudeHUD/Services/RemoteControlReload.swift
+      - path: ClaudeHUD/Services/MenuBarHiding.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.claudehud.tests

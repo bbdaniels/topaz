@@ -43,6 +43,7 @@
 		4EEC58697576EEABDCDC19D2 /* ActiveTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B41B2701679A6FA57B239A02 /* ActiveTasks.swift */; };
 		542A034864617B7ABDA85B0D /* SessionFiling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FAE66E99EB85A66B1E4DFDD /* SessionFiling.swift */; };
 		549CE25D176CD914F16D413C /* RemoteControlReload.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6620B0A1720DA0352F1893D /* RemoteControlReload.swift */; };
+		6D7AFDEE2B28E0CF04626EA0 /* MenuBarHiding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1405F00001CEC5B072FEFA53 /* MenuBarHiding.swift */; };
 		5570E5BE43267ED8BE716CDA /* SessionScanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E992A83FCF56D1E426D04F7A /* SessionScanTests.swift */; };
 		561F123A3DD19B92F6D0F233 /* ScreenCoverService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A1004F7D0D3C5C144210C7D /* ScreenCoverService.swift */; };
 		5ACB12D73E8B745370726F25 /* SessionMenuTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA085D40E8A53F2FFC35D133 /* SessionMenuTests.swift */; };
@@ -57,6 +58,7 @@
 		749DC764D831EF175567E9FC /* VaultTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B280310DE38541F7B2CD6849 /* VaultTabView.swift */; };
 		763D915CF0FBE368DEE6A12F /* HotkeyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D906C2A42EF5CC6963D24D58 /* HotkeyService.swift */; };
 		795F5B6F8EB4DA1352BCEC3A /* RemoteControlReload.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6620B0A1720DA0352F1893D /* RemoteControlReload.swift */; };
+		93546FFEA1691D2EB63FECB9 /* MenuBarHiding.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1405F00001CEC5B072FEFA53 /* MenuBarHiding.swift */; };
 		7A03189EDE7B0B322909FCCC /* ActiveTasksDueDateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50033B8E71A69F51D0C4867F /* ActiveTasksDueDateTests.swift */; };
 		815353343C4BC778548C4338 /* LibraryRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF071C0FD812AE7E6F9A7928 /* LibraryRow.swift */; };
 		81D79855CC684E2706696199 /* UsageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAA7DC5B4103396ACB2B5F3F /* UsageService.swift */; };
@@ -88,6 +90,7 @@
 		B6062851E1689D3F69E61783 /* AgentModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AEA2D1DA808678730DAFAB2 /* AgentModels.swift */; };
 		B6FDEF53606D0A2215924B47 /* PanelToggleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02A7425E4E602F719D1C163C /* PanelToggleTests.swift */; };
 		BD18E24E661B32BFB6BE7544 /* RemoteControlReloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 194323508DB0D4A4FFC26D7A /* RemoteControlReloadTests.swift */; };
+		98C68C5CD29291B8A4CE7D45 /* MenuBarHidingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70E9C49763EB8FB6281D6EE4 /* MenuBarHidingTests.swift */; };
 		C33493F7FE503475B4858C5D /* HostProcs.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB3BA8639E7160F135AC3EE9 /* HostProcs.swift */; };
 		CD7941AD5A6EEEDF57AED073 /* ProjectResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E196A0AEBD4F89C4DBAFB5D7 /* ProjectResolverTests.swift */; };
 		D0756275787722E728214B42 /* VaultProjectTree.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB651537B00E2E60ED97A772 /* VaultProjectTree.swift */; };
@@ -107,6 +110,7 @@
 		08C85940214C84CB1A4E170C /* AgentsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentsService.swift; sourceTree = "<group>"; };
 		17F46482310A6FD0D702F970 /* UsageModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageModels.swift; sourceTree = "<group>"; };
 		194323508DB0D4A4FFC26D7A /* RemoteControlReloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteControlReloadTests.swift; sourceTree = "<group>"; };
+		70E9C49763EB8FB6281D6EE4 /* MenuBarHidingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarHidingTests.swift; sourceTree = "<group>"; };
 		19A889B1D9FE0780BB3042FA /* StdioMCPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StdioMCPClient.swift; sourceTree = "<group>"; };
 		1C704E240AFCDBD31AC48951 /* SkillsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillsService.swift; sourceTree = "<group>"; };
 		1D731581C9FAF0D35F075729 /* hud-slack-mcp.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = "hud-slack-mcp.py"; sourceTree = "<group>"; };
@@ -174,6 +178,7 @@
 		E196A0AEBD4F89C4DBAFB5D7 /* ProjectResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectResolverTests.swift; sourceTree = "<group>"; };
 		E29EA2BAC4BE95B756B86E59 /* CoreText.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreText.framework; path = System/Library/Frameworks/CoreText.framework; sourceTree = SDKROOT; };
 		E6620B0A1720DA0352F1893D /* RemoteControlReload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteControlReload.swift; sourceTree = "<group>"; };
+		1405F00001CEC5B072FEFA53 /* MenuBarHiding.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarHiding.swift; sourceTree = "<group>"; };
 		E992A83FCF56D1E426D04F7A /* SessionScanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionScanTests.swift; sourceTree = "<group>"; };
 		EB3BA8639E7160F135AC3EE9 /* HostProcs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostProcs.swift; sourceTree = "<group>"; };
 		ECF32EB6AD8CA6F1CBD98A8A /* PanelToggle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelToggle.swift; sourceTree = "<group>"; };
@@ -213,6 +218,7 @@
 				DB043CB409497C537E66D2B6 /* LibraryService.swift */,
 				ECF32EB6AD8CA6F1CBD98A8A /* PanelToggle.swift */,
 				E6620B0A1720DA0352F1893D /* RemoteControlReload.swift */,
+				1405F00001CEC5B072FEFA53 /* MenuBarHiding.swift */,
 				9B94D0D82CF1A2E7920DEE61 /* RemoteControlServerService.swift */,
 				4A1004F7D0D3C5C144210C7D /* ScreenCoverService.swift */,
 				59E8596B647276D0A1586779 /* SecretsVault.swift */,
@@ -405,6 +411,7 @@
 				02A7425E4E602F719D1C163C /* PanelToggleTests.swift */,
 				E196A0AEBD4F89C4DBAFB5D7 /* ProjectResolverTests.swift */,
 				194323508DB0D4A4FFC26D7A /* RemoteControlReloadTests.swift */,
+				70E9C49763EB8FB6281D6EE4 /* MenuBarHidingTests.swift */,
 				A21A11D410B9F5296C55F5F7 /* SessionFilingTests.swift */,
 				FCE95C51E4C114A93E8C4749 /* SessionHostTests.swift */,
 				FA085D40E8A53F2FFC35D133 /* SessionMenuTests.swift */,
@@ -534,6 +541,8 @@
 				B6FDEF53606D0A2215924B47 /* PanelToggleTests.swift in Sources */,
 				CD7941AD5A6EEEDF57AED073 /* ProjectResolverTests.swift in Sources */,
 				549CE25D176CD914F16D413C /* RemoteControlReload.swift in Sources */,
+				6D7AFDEE2B28E0CF04626EA0 /* MenuBarHiding.swift in Sources */,
+				98C68C5CD29291B8A4CE7D45 /* MenuBarHidingTests.swift in Sources */,
 				BD18E24E661B32BFB6BE7544 /* RemoteControlReloadTests.swift in Sources */,
 				A71658DD4D0B31D25606F7AB /* SessionFiling.swift in Sources */,
 				268809B34C1257D1DD4FBCA4 /* SessionFilingTests.swift in Sources */,
@@ -588,6 +597,7 @@
 				B28C401B5B93D1B0AE175BE3 /* ObsidianMarkdownView.swift in Sources */,
 				E29AF62B9B355DB0C505CF22 /* PanelToggle.swift in Sources */,
 				795F5B6F8EB4DA1352BCEC3A /* RemoteControlReload.swift in Sources */,
+				93546FFEA1691D2EB63FECB9 /* MenuBarHiding.swift in Sources */,
 				49C5ED6B9CE798547957F5B3 /* RemoteControlServerService.swift in Sources */,
 				716AF768A9028A0E83E447BD /* SSEMCPClient.swift in Sources */,
 				561F123A3DD19B92F6D0F233 /* ScreenCoverService.swift in Sources */,
