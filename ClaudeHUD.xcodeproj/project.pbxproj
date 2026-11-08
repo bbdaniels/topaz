@@ -47,6 +47,7 @@
 		492BC7653640FF9128AA1571 /* ClaudeProcessMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89B4EC6274B95DFA33E0C571 /* ClaudeProcessMonitor.swift */; };
 		49C5ED6B9CE798547957F5B3 /* RemoteControlServerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9B94D0D82CF1A2E7920DEE61 /* RemoteControlServerService.swift */; };
 		4DEA00856BE8FFB74E36A917 /* NoteContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9236DD5E1930C1B92335C9C5 /* NoteContentView.swift */; };
+		4EDA095CE5FA7A6B7C9A3B40 /* PanelPlacementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CCD49CF023D8FE4FCF52366 /* PanelPlacementTests.swift */; };
 		4EEC58697576EEABDCDC19D2 /* ActiveTasks.swift in Sources */ = {isa = PBXBuildFile; fileRef = B41B2701679A6FA57B239A02 /* ActiveTasks.swift */; };
 		51D4582E94415B444FF4368F /* ParentWatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00B446859D84BC9123B1DC42 /* ParentWatch.swift */; };
 		542A034864617B7ABDA85B0D /* SessionFiling.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FAE66E99EB85A66B1E4DFDD /* SessionFiling.swift */; };
@@ -70,6 +71,7 @@
 		7A03189EDE7B0B322909FCCC /* ActiveTasksDueDateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50033B8E71A69F51D0C4867F /* ActiveTasksDueDateTests.swift */; };
 		815353343C4BC778548C4338 /* LibraryRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF071C0FD812AE7E6F9A7928 /* LibraryRow.swift */; };
 		81D79855CC684E2706696199 /* UsageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAA7DC5B4103396ACB2B5F3F /* UsageService.swift */; };
+		829FABF644507101998938D6 /* PanelPlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7F5DAF9B8216FB31DA99E31 /* PanelPlacement.swift */; };
 		833788A1F492EE5E46D352EE /* LibraryItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44C3321F95137F8014F94C16 /* LibraryItem.swift */; };
 		83E846E56832CF4D3C92053E /* DancingText.swift in Sources */ = {isa = PBXBuildFile; fileRef = A738B4887394612E7ADED77A /* DancingText.swift */; };
 		85FAE3D9A1FB9C99E73D9A64 /* SessionHistoryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C97BB9EE58B0DBF8AA04FDE7 /* SessionHistoryService.swift */; };
@@ -111,6 +113,7 @@
 		E957217FD251405B515AC2C1 /* PanelToggle.swift in Sources */ = {isa = PBXBuildFile; fileRef = ECF32EB6AD8CA6F1CBD98A8A /* PanelToggle.swift */; };
 		EEC5054A3B33EBA08F1A8D24 /* JSONRPCTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 620FB4690A1A9D7786A56696 /* JSONRPCTypes.swift */; };
 		F17C080B97EEB5E9D2735B14 /* VaultAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65E56E18D7A0EAD77100C255 /* VaultAccess.swift */; };
+		F2B09579FD4987288F5F2B4A /* PanelPlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7F5DAF9B8216FB31DA99E31 /* PanelPlacement.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -123,6 +126,7 @@
 		194323508DB0D4A4FFC26D7A /* RemoteControlReloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteControlReloadTests.swift; sourceTree = "<group>"; };
 		19A889B1D9FE0780BB3042FA /* StdioMCPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StdioMCPClient.swift; sourceTree = "<group>"; };
 		1C704E240AFCDBD31AC48951 /* SkillsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillsService.swift; sourceTree = "<group>"; };
+		1CCD49CF023D8FE4FCF52366 /* PanelPlacementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelPlacementTests.swift; sourceTree = "<group>"; };
 		1D731581C9FAF0D35F075729 /* hud-slack-mcp.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = "hud-slack-mcp.py"; sourceTree = "<group>"; };
 		207CDABC03F0B223AFE35A88 /* VaultIngestService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultIngestService.swift; sourceTree = "<group>"; };
 		29A820821CF961958265C819 /* TranscriptHeadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptHeadTests.swift; sourceTree = "<group>"; };
@@ -180,6 +184,7 @@
 		C3FD414E7E6143261B99F81F /* ClaudeHUDTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ClaudeHUDTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C53EC70F3DA9CDD0CC4EA24F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C6D82DD1759F543B48C98E52 /* ntfy-notify.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "ntfy-notify.sh"; sourceTree = "<group>"; };
+		C7F5DAF9B8216FB31DA99E31 /* PanelPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelPlacement.swift; sourceTree = "<group>"; };
 		C97BB9EE58B0DBF8AA04FDE7 /* SessionHistoryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionHistoryService.swift; sourceTree = "<group>"; };
 		CDFA4853FA49C5845C653FC5 /* UsageBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageBadge.swift; sourceTree = "<group>"; };
 		CE31FD7228157DC53CDE8B9E /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
@@ -233,6 +238,7 @@
 				CE31FD7228157DC53CDE8B9E /* KeychainService.swift */,
 				DB043CB409497C537E66D2B6 /* LibraryService.swift */,
 				3659F4225CE0E8541CDD4201 /* MenuBarHiding.swift */,
+				C7F5DAF9B8216FB31DA99E31 /* PanelPlacement.swift */,
 				ECF32EB6AD8CA6F1CBD98A8A /* PanelToggle.swift */,
 				00B446859D84BC9123B1DC42 /* ParentWatch.swift */,
 				E6620B0A1720DA0352F1893D /* RemoteControlReload.swift */,
@@ -428,6 +434,7 @@
 				56D94EDE8FDD699B87FB0898 /* HostProcsTests.swift */,
 				BA019621667901F1EDBA4E4F /* IMacLauncherTests.swift */,
 				E38BAD0B8494B3E97BC96206 /* MenuBarHidingTests.swift */,
+				1CCD49CF023D8FE4FCF52366 /* PanelPlacementTests.swift */,
 				02A7425E4E602F719D1C163C /* PanelToggleTests.swift */,
 				5EC3C3C315F28F2E03693E6F /* ParentWatchTests.swift */,
 				E196A0AEBD4F89C4DBAFB5D7 /* ProjectResolverTests.swift */,
@@ -562,6 +569,8 @@
 				60D57262CD13B7C50DC6939A /* IMacLauncherTests.swift in Sources */,
 				1D8DECC7A48596034B9B6CAF /* MenuBarHiding.swift in Sources */,
 				BCA5D19E67597CCF1A9743AC /* MenuBarHidingTests.swift in Sources */,
+				F2B09579FD4987288F5F2B4A /* PanelPlacement.swift in Sources */,
+				4EDA095CE5FA7A6B7C9A3B40 /* PanelPlacementTests.swift in Sources */,
 				E957217FD251405B515AC2C1 /* PanelToggle.swift in Sources */,
 				B6FDEF53606D0A2215924B47 /* PanelToggleTests.swift in Sources */,
 				44A5624F8D8661C200669979 /* ParentWatch.swift in Sources */,
@@ -624,6 +633,7 @@
 				4DEA00856BE8FFB74E36A917 /* NoteContentView.swift in Sources */,
 				2808B31571DA2A54C001878A /* NoteFile.swift in Sources */,
 				B28C401B5B93D1B0AE175BE3 /* ObsidianMarkdownView.swift in Sources */,
+				829FABF644507101998938D6 /* PanelPlacement.swift in Sources */,
 				E29AF62B9B355DB0C505CF22 /* PanelToggle.swift in Sources */,
 				51D4582E94415B444FF4368F /* ParentWatch.swift in Sources */,
 				795F5B6F8EB4DA1352BCEC3A /* RemoteControlReload.swift in Sources */,

@@ -71,15 +71,6 @@ class HUDPanelController {
         // HUDContentView.TabBar drag-to-reorder.
         panel.isMovableByWindowBackground = false
         panel.minSize = NSSize(width: 380, height: 420)
-        panel.setFrameAutosaveName("ClaudeHUDPanel")
-
-        if panel.frame.origin == .zero {
-            if let screen = NSScreen.main {
-                let x = screen.visibleFrame.maxX - 440
-                let y = screen.visibleFrame.maxY - 620
-                panel.setFrameOrigin(NSPoint(x: x, y: y))
-            }
-        }
 
         let contentView = HUDContentView()
             .environmentObject(appState)
@@ -97,7 +88,19 @@ class HUDPanelController {
         // is no controller, so every `.help(...)` in the app silently no-ops
         // and no tooltip ever appears. StripHosting lets the header in the
         // title-bar strip take its clicks.
-        panel.contentViewController = StripHosting.controller(contentView)
+        let controller = StripHosting.controller(contentView)
+        // The window's frame is ours, not the content's: left to size the
+        // window, the controller shrank it to the content's minimum on every
+        // launch (380 by 452).
+        controller.sizingOptions = []
+        panel.contentViewController = controller
+        // Every launch opens the panel in the full right third of the screen,
+        // beside Topaz (PanelPlacement). No frame autosave: the saved frame
+        // was the one the controller had shrunk.
+        if let screen = NSScreen.main ?? NSScreen.screens.first {
+            panel.setFrame(PanelPlacement.rightThird(of: screen.visibleFrame, minWidth: panel.minSize.width),
+                           display: false)
+        }
 
         self.panel = panel
     }
