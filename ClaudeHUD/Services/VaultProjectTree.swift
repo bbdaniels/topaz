@@ -409,10 +409,12 @@ final class RepoLocator: @unchecked Sendable {
 /// `VaultTabView.folderLiveSessions` for how each field is derived.
 /// What a session line and its project header show (Ben, 2026-11-03): one
 /// dot, green when the session is running, red for anything else, since a
-/// session not running is waiting on Ben. A red session with no terminal on
-/// this Mac that has not moved for `dimAfter` is a leftover: its line is
-/// dimmed and sorted last and it does not light the header. Nothing is
-/// stopped automatically.
+/// session not running is waiting on Ben. A session not running with no
+/// WezTerm tab here is grey (`noTab`; Ben, 2026-11-08: "grey status dot for
+/// alive, but not in wezterm"): closing a tab leaves its session running, so
+/// grey is a session put away, sorted last and not lighting the header. It
+/// replaced the leftover rule, which faded a red session after an hour with
+/// no terminal. Nothing is stopped automatically.
 enum SessionLight: Equatable {
     /// `holding`: orange, a session whose one shell command has run past
     /// `holdingAfter` with nothing else moving, a dev server or watcher it
@@ -421,9 +423,7 @@ enum SessionLight: Equatable {
     /// out (`workOut`: a background agent or shell task not yet reported
     /// back, or a process tree it left running; Ben, 2026-11-06, "we know
     /// when there's a process out"). Neither working nor waiting on Ben.
-    case running, holding, attention, dimmed
-
-    static let dimAfter: TimeInterval = 3600
+    case running, holding, attention, noTab
 
     /// The name the WezTerm lights file carries (`WezTerm.lightsJSON`).
     var name: String {
@@ -431,12 +431,14 @@ enum SessionLight: Equatable {
         case .running: return "running"
         case .holding: return "holding"
         case .attention: return "attention"
-        case .dimmed: return "dimmed"
+        case .noTab: return "no-tab"
         }
     }
     static let holdingAfter: TimeInterval = 300
 
-    /// `lastMoved` is when the session last wrote its state or transcript;
+    /// Running and holding keep their colors with or without a tab, since
+    /// they say the session is busy. `lastMoved` is when the session last
+    /// wrote its state or transcript;
     /// `inShell` is the CLI's "shell" status, whose state time is when the
     /// command started; `workOut` is `HostProcsSnapshot.hasWorkOut`;
     /// `AgentSession.light` passes all three.
@@ -445,12 +447,12 @@ enum SessionLight: Equatable {
         if running, inShell, now.timeIntervalSince(lastMoved) > holdingAfter { return .holding }
         if running { return .running }
         if workOut { return .holding }
-        return !hasWindow && now.timeIntervalSince(lastMoved) > dimAfter ? .dimmed : .attention
+        return hasWindow ? .attention : .noTab
     }
 
-    /// `items` in their order with the leftovers moved last.
-    static func leftoversLast<T>(_ items: [T], light: (T) -> SessionLight) -> [T] {
-        items.filter { light($0) != .dimmed } + items.filter { light($0) == .dimmed }
+    /// `items` in their order with the sessions with no tab moved last.
+    static func tabbedFirst<T>(_ items: [T], light: (T) -> SessionLight) -> [T] {
+        items.filter { light($0) != .noTab } + items.filter { light($0) == .noTab }
     }
 }
 
@@ -460,9 +462,9 @@ struct LiveSessionCounts: Equatable {
     var running = 0
     var holding = 0
     var attention = 0
-    var dimmed = 0
-    var isEmpty: Bool { running == 0 && holding == 0 && attention == 0 && dimmed == 0 }
-    /// The header's dot: red, green, orange, or none when only leftovers remain.
+    var noTab = 0
+    var isEmpty: Bool { running == 0 && holding == 0 && attention == 0 && noTab == 0 }
+    /// The header's dot: red, green, orange, or none when only sessions with no tab remain.
     var light: SessionLight? {
         attention > 0 ? .attention : running > 0 ? .running : holding > 0 ? .holding : nil
     }
@@ -472,7 +474,7 @@ struct LiveSessionCounts: Equatable {
         case .running: running += 1
         case .holding: holding += 1
         case .attention: attention += 1
-        case .dimmed: dimmed += 1
+        case .noTab: noTab += 1
         }
     }
 
@@ -480,7 +482,7 @@ struct LiveSessionCounts: Equatable {
         LiveSessionCounts(running: a.running + b.running,
                           holding: a.holding + b.holding,
                           attention: a.attention + b.attention,
-                          dimmed: a.dimmed + b.dimmed)
+                          noTab: a.noTab + b.noTab)
     }
 }
 
@@ -511,8 +513,8 @@ struct SessionMenuEntry: Equatable {
     /// The panel line's two texts: the session's name, then its machine.
     let name: String
     let machine: String
-    /// A leftover, shown faded as in the panel.
-    let dimmed: Bool
+    /// No WezTerm tab here (`SessionLight.noTab`), shown faded.
+    let noTab: Bool
 }
 
 /// The menu's Open Sessions are the panel's session lines, from the same
@@ -523,12 +525,12 @@ enum SessionMenu {
     static let generalTitle = "General"
 
     /// General first, as at the top of the panel, then each project A to Z,
-    /// each one's lines in the panel's order (leftovers last).
+    /// each one's lines in the panel's order (those with no tab last).
     static func entries(general: [LiveSessionLine],
                         byFolder: [String: [LiveSessionLine]]) -> [SessionMenuEntry] {
         func entry(_ l: LiveSessionLine, folder: String?) -> SessionMenuEntry {
             SessionMenuEntry(id: l.id, folder: folder, project: folder ?? generalTitle,
-                             name: l.name, machine: l.machine, dimmed: l.light == .dimmed)
+                             name: l.name, machine: l.machine, noTab: l.light == .noTab)
         }
         let folders = byFolder.keys.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
         return general.map { entry($0, folder: nil) }

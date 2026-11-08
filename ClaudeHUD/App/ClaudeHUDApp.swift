@@ -176,7 +176,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             menu.addItem(Self.header("Open Sessions"))
             for (i, e) in sessionsForMenu.enumerated() {
                 let item = NSMenuItem(title: e.project, action: #selector(openListedSession(_:)), keyEquivalent: "")
-                item.attributedTitle = Self.twoLine(e.project, "\(e.name) · \(e.machine)", dim: e.dimmed)
+                item.attributedTitle = Self.twoLine(e.project, "\(e.name) · \(e.machine)", dim: e.noTab)
                 item.target = self
                 item.tag = i
                 menu.addItem(item)

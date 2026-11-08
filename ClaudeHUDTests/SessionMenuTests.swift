@@ -46,16 +46,16 @@ final class SessionMenuTests: XCTestCase {
     }
 
     /// Two sessions of one project are two entries told apart by name and
-    /// machine, in the panel's order: the order given, leftovers last
+    /// machine, in the panel's order: the order given, those with no tab last
     /// (`LiveSessionLine.lines` does that move) and faded.
     func testSessionsOfOneProjectKeepThePanelOrder() {
         let e = SessionMenu.entries(general: [], byFolder: [
             "personal": [line("x", "Planner", machine: "MacBook"),
-                         line("y", "Old run", light: .dimmed)],
+                         line("y", "Old run", light: .noTab)],
         ])
         XCTAssertEqual(e.map(\.id), ["x", "y"])
         XCTAssertEqual(e.map(\.project), ["personal", "personal"])
         XCTAssertEqual(e.map(\.machine), ["MacBook", "iMac"])
-        XCTAssertEqual(e.map(\.dimmed), [false, true])
+        XCTAssertEqual(e.map(\.noTab), [false, true])
     }
 }

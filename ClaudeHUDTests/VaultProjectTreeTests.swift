@@ -84,12 +84,12 @@ final class VaultProjectTreeTests: XCTestCase {
         let node = ProjectTree.build([project("Personal"), project("Investing", parent: "Personal"),
                                       project("Raspberry Pi", parent: "Personal")])[0]
         let live = [
-            "Personal": LiveSessionCounts(running: 1, attention: 0, dimmed: 2),
-            "Investing": LiveSessionCounts(running: 0, attention: 1, dimmed: 0),
-            "Raspberry Pi": LiveSessionCounts(running: 2, attention: 0, dimmed: 1),
-            "Cayda": LiveSessionCounts(running: 9, attention: 9, dimmed: 9),
+            "Personal": LiveSessionCounts(running: 1, attention: 0, noTab: 2),
+            "Investing": LiveSessionCounts(running: 0, attention: 1, noTab: 0),
+            "Raspberry Pi": LiveSessionCounts(running: 2, attention: 0, noTab: 1),
+            "Cayda": LiveSessionCounts(running: 9, attention: 9, noTab: 9),
         ]
-        XCTAssertEqual(node.liveCounts(in: live), LiveSessionCounts(running: 3, attention: 1, dimmed: 3))
+        XCTAssertEqual(node.liveCounts(in: live), LiveSessionCounts(running: 3, attention: 1, noTab: 3))
         XCTAssertEqual(node.folderNames, ["Personal", "Investing", "Raspberry Pi"])
     }
 
@@ -117,7 +117,7 @@ final class VaultProjectTreeTests: XCTestCase {
                        ["Personal", "Cayda", "Mumbai"])
         // A session waiting on the user in a CHILD floats the whole family.
         let stale = ["Cayda": day(8), "Personal": day(1), "Investing": day(2), "Mumbai": day(5)]
-        let live = ["Investing": LiveSessionCounts(running: 0, attention: 1, dimmed: 0)]
+        let live = ["Investing": LiveSessionCounts(running: 0, attention: 1, noTab: 0)]
         XCTAssertEqual(ProjectTree.ordered(nodes, live: live) { stale[$0.name]! }.map(\.project.name),
                        ["Personal", "Cayda", "Mumbai"])
         XCTAssertEqual(ProjectTree.ordered(nodes, live: [:]) { stale[$0.name]! }.map(\.project.name),
@@ -136,7 +136,7 @@ final class VaultProjectTreeTests: XCTestCase {
                                        due("Mumbai", day(10)), project("Waiting")])
         let activity = ["Cayda": day(8), "Personal": day(1), "Investing": day(2),
                         "Mumbai": day(5), "Waiting": day(0)]
-        let live = ["Waiting": LiveSessionCounts(running: 0, attention: 1, dimmed: 0)]
+        let live = ["Waiting": LiveSessionCounts(running: 0, attention: 1, noTab: 0)]
         // Waiting first; then Personal, whose child is a day late; Mumbai is
         // due today, so not late, and keeps its recency place.
         XCTAssertEqual(ProjectTree.ordered(nodes, live: live, activity: { activity[$0.name]! }, now: now)
@@ -193,14 +193,14 @@ final class VaultProjectTreeTests: XCTestCase {
     }
 }
 
-/// The session lines' one dot and the leftover rule (`SessionLight`, Ben,
-/// 2026-11-03): green running, red anything else, and a red session with no
-/// terminal here that has not moved for an hour is dimmed, sorted last, and
-/// does not light its header.
+/// The session lines' one dot and the no-tab rule (`SessionLight`, Ben,
+/// 2026-11-03): green running, red anything else, and a session not running
+/// with no WezTerm tab here grey (2026-11-08), sorted last and not lighting
+/// its header.
 final class SessionLightTests: XCTestCase {
     let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-    func light(running: Bool = false, quietFor: TimeInterval, window: Bool = false) -> SessionLight {
+    func light(running: Bool = false, quietFor: TimeInterval, window: Bool = true) -> SessionLight {
         SessionLight.of(running: running, hasWindow: window, lastMoved: now.addingTimeInterval(-quietFor), now: now)
     }
 
@@ -225,10 +225,11 @@ final class SessionLightTests: XCTestCase {
         XCTAssertEqual(counts.light, .attention)
     }
 
-    func testARedSessionIsDimmedAfterAnHourOnlyWithNoTerminal() {
-        XCTAssertEqual(light(quietFor: 3601), .dimmed)
-        XCTAssertEqual(light(quietFor: 3599), .attention)
+    func testASessionWithNoTabIsGreyAtOnceUnlessBusy() {
+        XCTAssertEqual(light(quietFor: 5, window: false), .noTab)
         XCTAssertEqual(light(quietFor: 7200, window: true), .attention)
+        XCTAssertEqual(light(running: true, quietFor: 5, window: false), .running)
+        XCTAssertEqual(SessionLight.of(running: false, workOut: true, hasWindow: false, lastMoved: now, now: now), .holding)
     }
 
     func testALeftOutTreeIsListedUnderTheProjectItRunsIn() {
@@ -246,14 +247,14 @@ final class SessionLightTests: XCTestCase {
     }
 
     func testTheHeaderIsRedOverGreenAndLeftoversLightNothing() {
-        XCTAssertEqual(LiveSessionCounts(running: 1, attention: 1, dimmed: 0).light, .attention)
-        XCTAssertEqual(LiveSessionCounts(running: 1, attention: 0, dimmed: 3).light, .running)
-        XCTAssertNil(LiveSessionCounts(running: 0, attention: 0, dimmed: 2).light)
+        XCTAssertEqual(LiveSessionCounts(running: 1, attention: 1, noTab: 0).light, .attention)
+        XCTAssertEqual(LiveSessionCounts(running: 1, attention: 0, noTab: 3).light, .running)
+        XCTAssertNil(LiveSessionCounts(running: 0, attention: 0, noTab: 2).light)
     }
 
-    func testLeftoversSortLastAndKeepTheirOrder() {
-        let items: [(String, SessionLight)] = [("old", .dimmed), ("run", .running), ("older", .dimmed), ("red", .attention)]
-        XCTAssertEqual(SessionLight.leftoversLast(items, light: { $0.1 }).map { $0.0 }, ["run", "red", "old", "older"])
+    func testSessionsWithNoTabSortLastAndKeepTheirOrder() {
+        let items: [(String, SessionLight)] = [("old", .noTab), ("run", .running), ("older", .noTab), ("red", .attention)]
+        XCTAssertEqual(SessionLight.tabbedFirst(items, light: { $0.1 }).map { $0.0 }, ["run", "red", "old", "older"])
     }
 
     func testTheGatesEndAnswerReadsAsStoppedOrItsReason() {

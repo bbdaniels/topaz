@@ -89,7 +89,7 @@ final class WezTermServiceTests: XCTestCase {
         XCTAssertEqual(rows.map { $0["light"] as? String }, ["running", "holding"])
         XCTAssertEqual(rows[1]["tab"] as? String, "projects (Mac)")
         XCTAssertEqual(rows[1]["cwd"] as? String, "/Users/u/Projects")
-        XCTAssertEqual([SessionLight.running, .holding, .attention, .dimmed].map(\.name),
-                       ["running", "holding", "attention", "dimmed"])
+        XCTAssertEqual([SessionLight.running, .holding, .attention, .noTab].map(\.name),
+                       ["running", "holding", "attention", "no-tab"])
     }
 }

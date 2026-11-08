@@ -719,17 +719,19 @@ extension LiveSessionLine {
                   hasWindow: a.hasWindow)
     }
 
-    /// The lines of these sessions in their order, leftovers last.
+    /// The lines of these sessions in their order, those with no tab last.
     static func lines(_ sessions: [AgentSession], now: Date) -> [LiveSessionLine] {
-        SessionLight.leftoversLast(sessions.map { LiveSessionLine($0, now: now) }, light: \.light)
+        SessionLight.tabbedFirst(sessions.map { LiveSessionLine($0, now: now) }, light: \.light)
     }
 }
 
 /// One session under its project or under General: its dot, its title, its
 /// machine in grey. A click opens it (`onOpen`); under the pointer a × stops
 /// it at once through the gate's `end` on its machine, with no confirmation
-/// (Ben, 2026-11-03). Closing its terminal tab only detaches. A leftover
-/// (`SessionLight.dimmed`) shows faded.
+/// (Ben, 2026-11-03). Closing its terminal tab only detaches, and the dot
+/// turns grey (`SessionLight.noTab`). Once the × is pressed the name is
+/// struck through until the session is gone (Ben, 2026-11-08: "when
+/// something is truly being closed out, strikethrough text").
 struct SessionLineView: View {
     let line: LiveSessionLine
     let inset: CGFloat
@@ -746,7 +748,8 @@ struct SessionLineView: View {
                         .frame(width: 6, height: 6).frame(width: 10)
                     Text(line.name)
                         .font(.system(size: 11.5 * scale))
-                        .foregroundColor(.primary.opacity(line.hasWindow ? 0.85 : 0.6))
+                        .strikethrough(stopping)
+                        .foregroundColor(.primary.opacity(stopping ? 0.45 : line.hasWindow ? 0.85 : 0.6))
                         .lineLimit(1).truncationMode(.tail)
                     Spacer(minLength: 8)
                     Text(line.machine)
@@ -772,7 +775,6 @@ struct SessionLineView: View {
         .padding(.trailing, 4)
         .padding(.vertical, 2)
         .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(hovering ? 0.08 : 0)))
-        .opacity(stopping ? 0.35 : line.light == .dimmed ? 0.45 : 1)
         .onHover { hovering = $0 }
     }
 
@@ -865,13 +867,14 @@ struct LostTreeLineView: View {
 
 extension SessionLight {
     /// The dot: green running, orange holding a long shell command or work
-    /// left out, red
-    /// for anything that needs Ben (dimmed lines fade the red).
+    /// left out, red for anything that needs Ben, grey for a session with no
+    /// tab here.
     var color: Color {
         switch self {
         case .running: return .green
         case .holding: return .orange
-        case .attention, .dimmed: return .red
+        case .attention: return .red
+        case .noTab: return .gray
         }
     }
 }

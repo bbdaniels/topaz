@@ -47,11 +47,11 @@ final class HostProcsTests: XCTestCase {
     func testAStoppedTurnWithWorkOutIsOrangeAndARunningOneGreen() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         func light(running: Bool, workOut: Bool, quiet: TimeInterval = 60) -> SessionLight {
-            SessionLight.of(running: running, workOut: workOut, hasWindow: false,
+            SessionLight.of(running: running, workOut: workOut, hasWindow: true,
                             lastMoved: now.addingTimeInterval(-quiet), now: now)
         }
         XCTAssertEqual(light(running: false, workOut: true), .holding)
-        XCTAssertEqual(light(running: false, workOut: true, quiet: 7200), .holding, "work out is never a leftover")
+        XCTAssertEqual(light(running: false, workOut: true, quiet: 7200), .holding, "work out stays orange however long it runs")
         XCTAssertEqual(light(running: true, workOut: true), .running)
         XCTAssertEqual(light(running: false, workOut: false), .attention)
     }
