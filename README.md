@@ -129,7 +129,7 @@ xcodebuild test -scheme ClaudeHUDTests -destination 'platform=macOS'
 
 `ClaudeHUD --process-report` prints the menu's Background Jobs and Orphans sections and the classification of every Claude worker, then exits. It is read-only and safe to run while the menu-bar app is running.
 
-`ClaudeHUD --remote-control on|off|status` turns the persistent Remote Control server (launchd agent `com.bbdaniels.claude-remote-control`, the header antenna) on or off, or prints its state; the same load and unload as the header toggle.
+`ClaudeHUD --remote-control on|off|status` turns the persistent Remote Control server (launchd agent `com.bbdaniels.claude-remote-control`, the header antenna) on or off, or prints its state; the same load and unload as the header toggle. The server's sessions are its child processes, so a restart or turn-off would end them all: while it has a live session, the header toggle's change waits and is applied once the last one ends (the antenna's status line says so), and the command line refuses and changes nothing.
 
 ## How it works
 
@@ -188,6 +188,7 @@ ClaudeHUD/
     KeychainService.swift          # API key storage
     HotkeyService.swift            # Global hotkey registration
     RemoteControlServerService.swift # launchd agent for claude remote-control
+    RemoteControlReload.swift        # when it may restart: waits for its live sessions
   Resources/
     Assets.xcassets/       # App icons and images
     ntfy-notify.sh         # Bundled notification hook script

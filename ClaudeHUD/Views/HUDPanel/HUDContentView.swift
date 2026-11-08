@@ -852,25 +852,22 @@ struct HeaderGlyphMenu<Content: View>: View {
 /// Header control for the persistent Remote Control server
 /// (`RemoteControlServerService`): the glyph's color carries its state
 /// (green running, orange enabled but down, gray off), the menu turns it on
-/// or off. Its permission mode follows `PermissionModeMenu`.
+/// or off. Its permission mode follows `PermissionModeMenu`. A restart or
+/// turn-off waits for the server's live sessions to end, and the status line
+/// says so (`RemoteControlReload`).
 struct RemoteControlMenu: View {
     @EnvironmentObject var server: RemoteControlServerService
     var body: some View {
         HeaderGlyphMenu(systemName: "dot.radiowaves.left.and.right", color: color,
-                        tip: "Remote Control: \(status)") {
-            Text(status)
+                        tip: "Remote Control: \(server.status)") {
+            Text(server.status)
             Divider()
             Toggle("Remote Control", isOn: Binding(
-                get: { server.isEnabled },
+                get: { server.isOn },
                 set: { server.setEnabled($0) }
             ))
             .disabled(server.isBusy)
         }
-    }
-    private var status: String {
-        if server.isBusy { return "Restarting" }
-        if let pid = server.pid { return "Running as \(RemoteControlServerService.serverName) (pid \(pid))" }
-        return server.isEnabled ? "Enabled, not running" : "Off"
     }
     private var color: Color {
         if server.pid != nil { return .green }

@@ -51,6 +51,7 @@ targets:
       - path: ClaudeHUD/Services/PanelToggle.swift
       - path: ClaudeHUD/Services/HostProcs.swift
       - path: ClaudeHUD/Services/WezTermService.swift
+      - path: ClaudeHUD/Services/RemoteControlReload.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.claudehud.tests
