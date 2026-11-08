@@ -298,7 +298,6 @@ final class AgentsService: ObservableObject {
                 worktreePath: nil,
                 sessionId: r.sessionId,
                 iMacTmux: tmuxSession,
-                iMacAttach: r.attach,
                 inShell: r.status == "shell"
             ))
         }
@@ -562,8 +561,9 @@ final class AgentsService: ObservableObject {
     /// claude.ai when there is a terminal; 2026-11-07, one WezTerm window, a
     /// tab per session). Already open in a tab (found by a scan made at the
     /// click, never the last one, which can name a tab closed since): that
-    /// tab comes forward. Not open: a new tab running `tmux attach` over ssh
-    /// for an iMac session or `claude attach` for a Mac daemon session. A
+    /// tab comes forward. Not open: a new tab running `claude attach` for a
+    /// Mac daemon session; an iMac session's tab is Topaz's config's to
+    /// focus or open (`WezTerm.openIMac`), so it is never opened twice. A
     /// session started from the phone or claude.ai on this Mac has no
     /// terminal anywhere (Remote Control spawns it headless), so it alone
     /// opens its claude.ai page. False when nothing could be opened.
@@ -588,9 +588,7 @@ final class AgentsService: ObservableObject {
                         switch outcome {
                         case .running(let answer):
                             IMacLive.refresh(force: true)
-                            let title = IMacLauncher.tabTitle(answer)
-                            WezTerm.open(title: title, argv: IMacLauncher.attachArgv(answer), cwd: dir,
-                                         find: { $0.first { $0.tabTitle == title } })
+                            WezTerm.openIMac(session: IMacLauncher.tabTitle(answer))
                         case .notOnIMac(let reason), .failed(let reason):
                             let alert = NSAlert()
                             alert.alertStyle = .warning
@@ -602,10 +600,7 @@ final class AgentsService: ObservableObject {
                 }
                 return true
             }
-            let answer = IMacLauncher.Answer(started: false, session: tmux,
-                attach: a.iMacAttach ?? "tmux attach -t " + IMacLauncher.shellQuote("=" + tmux), dir: nil)
-            return WezTerm.open(title: IMacLauncher.tabTitle(answer), argv: IMacLauncher.attachArgv(answer),
-                                cwd: dir, find: find)
+            return WezTerm.openIMac(session: tmux)
         }
         if let url = a.remoteControlURL {
             NSWorkspace.shared.open(url)

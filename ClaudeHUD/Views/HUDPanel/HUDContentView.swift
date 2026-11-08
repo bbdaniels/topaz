@@ -1019,11 +1019,8 @@ func launchClaudeSession(prompt: String? = nil, resume: String? = nil, name: Str
             switch outcome {
             case .running(let answer):
                 IMacLive.refresh(force: true)
-                // A session already there may have its tab already: the
-                // WezTerm config opens one for every live iMac session.
-                let title = IMacLauncher.tabTitle(answer)
-                WezTerm.open(title: title, argv: IMacLauncher.attachArgv(answer),
-                             find: { $0.first { $0.tabTitle == title } })
+                // Topaz's config opens the tab (or focuses the one it has).
+                WezTerm.openIMac(session: IMacLauncher.tabTitle(answer))
             case .notOnIMac(let reason):
                 if let fallback { fallback() } else { showIMacFailure(reason, detail: detail, offerMac: nil) }
             case .failed(let reason):

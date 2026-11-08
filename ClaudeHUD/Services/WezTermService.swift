@@ -16,12 +16,13 @@ private let logger = Logger(subsystem: "com.claudehud", category: "WezTerm")
 /// NSWorkspace, never AppleScript, so ClaudeHUD needs neither Apple Events nor
 /// Accessibility for it.
 ///
-/// Titles are the contract with the WezTerm config (bbdaniels/personal,
-/// `deploy/mac/wezterm/wezterm.lua`): every few seconds it opens a tab for
-/// each live iMac session that has no tab titled with its tmux session name,
-/// `rc-<name>`. So a tab ClaudeHUD opens for an iMac session is titled exactly
-/// that, or the config would open a second one. A session on this Mac gets
-/// `<project> (Mac)` and is found again by the terminal of its
+/// The WezTerm config (bbdaniels/personal, `deploy/mac/wezterm/wezterm.lua`)
+/// is the one opener of an iMac session's tab, titled with its tmux session
+/// name, `rc-<name>`: every few seconds it opens one for each live iMac
+/// session that never had one, and ClaudeHUD asks it for a tab by
+/// `openIMac`, never spawning one itself (2026-11-08: both opened one for a
+/// new session, so it got two). A session on this Mac gets `<project> (Mac)`,
+/// is spawned here, and is found again by the terminal of its
 /// `claude attach` process, which is the tab's own.
 ///
 /// The parsing, matching and argument building are pure and unit tested;
@@ -59,6 +60,20 @@ enum WezTerm {
     /// "/dev/ttys003" as ps prints it: "ttys003".
     static func psTTY(_ ttyName: String) -> String {
         ttyName.hasPrefix("/dev/") ? String(ttyName.dropFirst(5)) : ttyName
+    }
+
+    /// The line ClaudeHUD writes to `openRequestFile` to ask the config for
+    /// an iMac session's tab: the session, a tab, the time in milliseconds
+    /// (a new request even for the same session), a newline. Nil unless
+    /// `session` is a gate session, `rc-` and pi-gate's NAME
+    /// (`[a-z0-9][a-z0-9-]{0,39}`), since the config hands it to ssh.
+    static func openRequest(session: String, at: Date) -> String? {
+        guard session.hasPrefix("rc-") else { return nil }
+        let name = session.dropFirst(3)
+        guard (1...IMacLauncher.maxName).contains(name.count), name.first != "-",
+              name.allSatisfy({ ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "-" })
+        else { return nil }
+        return "\(session)\t\(Int((at.timeIntervalSince1970 * 1000).rounded()))\n"
     }
 
     /// The title of a tab for a session on this Mac.
@@ -206,6 +221,30 @@ enum WezTerm {
         return parsePanes(data)
     }
 
+    /// Read by the config every half second (`take_request` there).
+    static var openRequestFile: URL {
+        URL(fileURLWithPath: NSHomeDirectory() + "/Library/Caches/ClaudeHUD/wezterm-open.txt")
+    }
+
+    /// Put Ben in an iMac session's tab: ask the config to focus it, or open
+    /// it when there is none, and bring Topaz forward (launching it, whose
+    /// startup then reads the request). False when Topaz is not installed or
+    /// `session` is not a gate session.
+    @MainActor
+    @discardableResult
+    static func openIMac(session: String) -> Bool {
+        guard isInstalled, let line = openRequest(session: session, at: Date()) else { return false }
+        let url = openRequestFile
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(line.utf8).write(to: url, options: .atomic)
+        } catch {
+            logger.error("Topaz open request not written: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+        return activateApp()
+    }
+
     /// Bring WezTerm to the front, launching it when it is not running (its
     /// `gui-startup` then opens a tab for every live iMac session).
     @MainActor
@@ -220,12 +259,11 @@ enum WezTerm {
         return true
     }
 
-    /// Open a session's tab and bring WezTerm forward: focus the tab `find`
-    /// picks from the panes (scanned now, off the main thread), else spawn
-    /// `argv` in `cwd` as a new tab titled `title`. When WezTerm is not
-    /// running it is launched first; for an iMac session (`rc-` title) the
-    /// config's startup opens its tab, which is waited for (8 s) before one
-    /// is spawned. False only when WezTerm is not installed.
+    /// Open a Mac session's tab and bring WezTerm forward: focus the tab
+    /// `find` picks from the panes (scanned now, off the main thread), else
+    /// spawn `argv` in `cwd` as a new tab titled `title`. When WezTerm is not
+    /// running it is launched first. An iMac session's tab is the config's
+    /// to open (`openIMac`). False only when WezTerm is not installed.
     @MainActor
     @discardableResult
     static func open(title: String, argv: [String], cwd: String? = nil,
@@ -235,7 +273,7 @@ enum WezTerm {
             var panes = WezTerm.panes()
             if panes == nil {
                 DispatchQueue.main.sync { _ = WezTerm.activateApp() }
-                panes = waitForPanes(until: title.hasPrefix("rc-") ? { find($0) != nil } : { !$0.isEmpty })
+                panes = waitForPanes(until: { !$0.isEmpty })
             }
             guard let panes else {
                 logger.error("WezTerm did not answer; no tab for \(title, privacy: .public)")

@@ -74,6 +74,20 @@ final class WezTermServiceTests: XCTestCase {
         XCTAssertEqual(WezTerm.macTabTitle(project: "ClaudeHUD"), "ClaudeHUD (Mac)")
     }
 
+    /// Topaz's config is the one opener of an iMac session's tab: ClaudeHUD
+    /// asks it by this line (the gate's tmux session, a tab, the time in
+    /// milliseconds), and only a gate session's name is ever asked, since the
+    /// config passes it to ssh.
+    func testAnIMacTabIsAskedOfTheConfig() {
+        let at = Date(timeIntervalSince1970: 1000.25)
+        XCTAssertEqual(WezTerm.openRequest(session: "rc-topaz-1", at: at), "rc-topaz-1\t1000250\n")
+        XCTAssertEqual(WezTerm.openRequest(session: "rc-" + String(repeating: "a", count: 40), at: at)?.isEmpty, false)
+        for bad in ["rc-", "rc--x", "rc-Topaz", "rc-a b", "rc-a;rm", "duet", "Topaz (Mac)",
+                    "rc-" + String(repeating: "a", count: 41)] {
+            XCTAssertNil(WezTerm.openRequest(session: bad, at: at), bad)
+        }
+    }
+
     /// The WezTerm config reads each tab's dot from this file, so it names
     /// the pane, the tab and the HUD's light for the session in it.
     func testTheLightsFileCarriesEachTabsLight() throws {

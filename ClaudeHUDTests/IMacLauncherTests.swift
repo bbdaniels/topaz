@@ -68,7 +68,6 @@ final class IMacLauncherTests: XCTestCase {
         }
         XCTAssertTrue(answer.started)
         XCTAssertEqual(answer.session, "rc-probe")
-        XCTAssertEqual(IMacLauncher.attachArgv(answer), ["/usr/bin/ssh", "-t", "imac", "tmux -L pi-gate attach -t =rc-probe"])
 
         let there = Data(#"{"ok": true, "started": false, "attach": "tmux -L pi-gate attach -t =rc-probe", "session": "rc-probe", "alive": true}"#.utf8)
         XCTAssertEqual(IMacLauncher.outcome(status: 0, stdout: there),

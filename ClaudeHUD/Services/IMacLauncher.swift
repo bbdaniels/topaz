@@ -174,15 +174,8 @@ enum IMacLauncher {
         ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", sshHost, remoteCommand(r)]
     }
 
-    /// What a WezTerm tab runs to show the session: its terminal on the
-    /// iMac, the argv the WezTerm config's own tabs run. Closing the tab
-    /// detaches; the session runs on.
-    static func attachArgv(_ a: Answer) -> [String] {
-        ["/usr/bin/ssh", "-t", sshHost, a.attach]
-    }
-
-    /// The title of the session's WezTerm tab: its tmux session, `rc-<name>`,
-    /// the title the WezTerm config's sync looks for, so it opens no second tab.
+    /// The title of the session's Topaz tab: its tmux session, `rc-<name>`,
+    /// the title the config opens it under (`WezTerm.openIMac`).
     static func tabTitle(_ a: Answer) -> String { a.session }
 
     /// The launcher's answer, read. `status` is ssh's exit status: 255 is

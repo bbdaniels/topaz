@@ -236,9 +236,6 @@ struct AgentSession: Identifiable, Equatable {
     /// the phone or claude.ai), which a click first moves into the gate's
     /// tmux with the gate's `adopt` (AgentsService.open).
     var iMacTmux: String? = nil
-    /// The gate's command that attaches to `iMacTmux` (its own tmux server
-    /// or the default one); nil from a gate that does not report it.
-    var iMacAttach: String? = nil
     /// The session's title, the one History shows (`SessionScan.sidecarTitle`),
     /// set by `AgentsService.reload` for a live session; nil when none is
     /// written yet.
