@@ -1,9 +1,10 @@
 import Foundation
 
 /// The menu bar gem shows blue while Topaz's fn dictation is listening (Ben,
-/// 2026-11-08): from the moment its speech to text socket is connected, so
-/// that words are actually being heard, until fn is released or the session
-/// ends however it ends. Topaz posts the distributed notification `name`
+/// 2026-11-08): from the instant fn is pressed, until fn is released or the
+/// session ends however it ends. The notification is handled as it arrives,
+/// with no debounce or animation: the gem changes on the same pass of the
+/// main run loop. Topaz posts the distributed notification `name`
 /// with userInfo `state` ("listening" or "stopped") and `pid` (its own), and
 /// refreshes "listening" every second (wezterm-gui/src/dictation/light.rs).
 ///

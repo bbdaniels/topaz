@@ -84,9 +84,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         if let button = statusItem?.button {
-            let icon = NSImage(named: "MenuBarIcon")
-            icon?.isTemplate = true
-            button.image = icon
+            button.image = gemIcons.normal
             button.toolTip = "Loupe"
             button.action = #selector(statusItemClicked(_:))
             button.target = self
@@ -130,13 +128,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menuBarHiding.toggleReveal()
     }
 
+    /// Both gems, loaded once, so a change of light is only the swap.
+    private lazy var gemIcons: (normal: NSImage?, listening: NSImage?) = {
+        let normal = NSImage(named: "MenuBarIcon")
+        normal?.isTemplate = true
+        let listening = NSImage(named: "MenuBarIconListening")
+        listening?.isTemplate = false
+        return (normal, listening)
+    }()
+
     /// The gem: blue (MenuBarIconListening, not a template) while dictation
     /// listens, else the template gem that follows the menu bar's appearance.
     private func showDictation(_ listening: Bool) {
+        statusItem?.button?.image = listening ? gemIcons.listening : gemIcons.normal
         logger.info("fn dictation \(listening ? "listening" : "stopped", privacy: .public): gem \(listening ? "blue" : "normal", privacy: .public)")
-        let icon = NSImage(named: listening ? "MenuBarIconListening" : "MenuBarIcon")
-        icon?.isTemplate = !listening
-        statusItem?.button?.image = icon
     }
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
