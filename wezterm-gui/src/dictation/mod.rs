@@ -1,4 +1,5 @@
-//! Hold fn to dictate (Topaz, macOS; config.fn_dictation), in any app. While
+//! Hold fn, or right Option (keys::HOLD_KEYS), to dictate (Topaz, macOS;
+//! config.fn_dictation), in any app. While
 //! fn is held the microphone streams to Anthropic's speech to text, the
 //! service behind Claude Code's /voice, and the words are typed as they
 //! arrive into what had the keyboard at fn down: Topaz's active pane, through

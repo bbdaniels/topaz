@@ -12,10 +12,29 @@
 //! `MAX_CHUNK_UTF16` UTF-16 units, the most CGEventKeyboardSetUnicodeString
 //! reliably carries in one event.
 
-/// kVK_Function, the fn (Globe) key.
-pub const FN_KEY_CODE: u16 = 0x3F;
-/// kCGEventFlagMaskSecondaryFn (NSEventModifierFlagFunction).
-pub const FN_FLAG: u64 = 0x80_0000;
+/// A key whose hold dictates: its key code and the flag its own
+/// flags-changed events carry while it is down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HoldKey {
+    pub code: u16,
+    pub flag: u64,
+}
+
+/// fn (Globe): kVK_Function and kCGEventFlagMaskSecondaryFn
+/// (NSEventModifierFlagFunction).
+pub const FN_KEY: HoldKey = HoldKey {
+    code: 0x3F,
+    flag: 0x80_0000,
+};
+/// Right Option (Ben, 2026-11-09: a second dictation key, one he never
+/// uses otherwise): kVK_RightOption and NX_DEVICERALTKEYMASK, the device
+/// flag of the right Option key alone, so the left Option never counts.
+pub const RIGHT_OPTION_KEY: HoldKey = HoldKey {
+    code: 0x3D,
+    flag: 0x40,
+};
+/// The keys a hold of either of which dictates.
+pub const HOLD_KEYS: [HoldKey; 2] = [FN_KEY, RIGHT_OPTION_KEY];
 /// kVK_Delete, the key that deletes backward.
 pub const BACKSPACE_KEY_CODE: u16 = 51;
 /// The character that key sends (NSDeleteCharacter).
@@ -23,21 +42,31 @@ pub const DELETE_CHARACTER: u16 = 0x7F;
 /// The most UTF-16 units one keyboard event carries.
 pub const MAX_CHUNK_UTF16: usize = 20;
 
-/// The fn key's state after a flags-changed event, from that key's own
+/// A hold key's state after a flags-changed event, from that key's own
 /// events only: arrow, Home, End, Page and function keys carry the fn flag
 /// too, so a modifier released while one of them is held shows the flag
-/// although fn was never touched. While fn is down, its next event is the
-/// release; while it is up, its event is a press only when the flag agrees,
-/// so a release whose press the tap missed (the tap was off) is not taken
-/// for a press.
-pub fn function_key_after(was_down: bool, key_code: u16, flags: u64) -> bool {
-    if key_code != FN_KEY_CODE {
+/// although fn was never touched. While the key is down, its next event is
+/// the release; while it is up, its event is a press only when the flag
+/// agrees, so a release whose press the tap missed (the tap was off) is not
+/// taken for a press.
+pub fn hold_key_after(key: HoldKey, was_down: bool, key_code: u16, flags: u64) -> bool {
+    if key_code != key.code {
         was_down
     } else if was_down {
         false
     } else {
-        flags & FN_FLAG != 0
+        flags & key.flag != 0
     }
+}
+
+/// Every hold key's state after a flags-changed event; dictation is held
+/// while any of them is down.
+pub fn hold_keys_after(was: [bool; 2], key_code: u16, flags: u64) -> [bool; 2] {
+    let mut now = was;
+    for (held, key) in now.iter_mut().zip(HOLD_KEYS) {
+        *held = hold_key_after(key, *held, key_code, flags);
+    }
+    now
 }
 
 /// Who has the keyboard at fn down, from three readings. The frontmost
@@ -226,6 +255,23 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
+    fn fn_after(was_down: bool, key_code: u16, flags: u64) -> bool {
+        hold_key_after(FN_KEY, was_down, key_code, flags)
+    }
+
+    #[test]
+    fn right_option_holds_and_left_option_does_not() {
+        const OPTION: u16 = 0x3A;
+        // Right Option down (its device flag and the Option flag), then up.
+        assert_eq!(hold_keys_after([false, false], 0x3D, 0x8_0040), [false, true]);
+        assert_eq!(hold_keys_after([false, true], 0x3D, 0x10_0000), [false, false]);
+        // Left Option sets the Option flag and its own device flag (0x20) only.
+        assert_eq!(hold_keys_after([false, false], OPTION, 0x8_0020), [false, false]);
+        // fn and right Option held together: each released on its own event.
+        assert_eq!(hold_keys_after([true, false], 0x3D, 0x88_0040), [true, true]);
+        assert_eq!(hold_keys_after([true, true], FN_KEY.code, 0x8_0040), [false, true]);
+    }
+
     #[test]
     fn only_the_fn_key_moves_its_state() {
         const OPTION: u16 = 0x3A;
@@ -233,23 +279,23 @@ mod tests {
         const COMMAND: u16 = 0x37;
         const SHIFT: u16 = 0x38;
         // fn down, fn up.
-        assert!(function_key_after(false, FN_KEY_CODE, FN_FLAG));
-        assert!(!function_key_after(true, FN_KEY_CODE, 0));
+        assert!(fn_after(false, FN_KEY.code, FN_KEY.flag));
+        assert!(!fn_after(true, FN_KEY.code, 0));
         // Other flags beside fn's do not matter.
-        assert!(function_key_after(false, FN_KEY_CODE, FN_FLAG | 0x100));
+        assert!(fn_after(false, FN_KEY.code, FN_KEY.flag | 0x100));
         // Option held, an arrow pressed, Option released first: the event is
         // Option's, with the fn flag set by the arrow. Not fn.
-        assert!(!function_key_after(false, OPTION, FN_FLAG));
-        assert!(!function_key_after(false, RIGHT_OPTION, FN_FLAG));
-        assert!(!function_key_after(false, COMMAND, FN_FLAG));
+        assert!(!fn_after(false, OPTION, FN_KEY.flag));
+        assert!(!fn_after(false, RIGHT_OPTION, FN_KEY.flag));
+        assert!(!fn_after(false, COMMAND, FN_KEY.flag));
         // Nor does the next modifier change end a press that is real.
-        assert!(function_key_after(true, SHIFT, 0));
-        assert!(function_key_after(true, COMMAND, FN_FLAG));
+        assert!(fn_after(true, SHIFT, 0));
+        assert!(fn_after(true, COMMAND, FN_KEY.flag));
         // fn released while an arrow is still held keeps the flag set:
         // still the release.
-        assert!(!function_key_after(true, FN_KEY_CODE, FN_FLAG));
+        assert!(!fn_after(true, FN_KEY.code, FN_KEY.flag));
         // A release whose press was missed: not a press.
-        assert!(!function_key_after(false, FN_KEY_CODE, 0));
+        assert!(!fn_after(false, FN_KEY.code, 0));
     }
 
     #[test]

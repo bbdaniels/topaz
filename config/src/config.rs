@@ -520,7 +520,8 @@ pub struct Config {
     /// until the last words are typed, or switching apps, cancels, so fn
     /// shortcuts keep working and nothing lands after your own typing. Needs
     /// Input Monitoring (to hear fn everywhere) and, for other apps,
-    /// Accessibility (to type there).
+    /// Accessibility (to type there). Right Option, held alone, dictates the
+    /// same way as fn (the left Option does not).
     #[dynamic(default)]
     pub fn_dictation: bool,
 

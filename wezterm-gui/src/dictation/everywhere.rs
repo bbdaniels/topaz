@@ -173,7 +173,8 @@ fn mask(kind: u32) -> u64 {
 /// tap's thread, which is the life of the process.
 struct TapState {
     port: CFMachPortRef,
-    fn_down: bool,
+    /// Whether each of `keys::HOLD_KEYS` is down.
+    held: [bool; 2],
 }
 
 /// How long to wait before trying the tap again when macOS refuses it
@@ -190,7 +191,7 @@ fn run_tap() {
     }
     let state = Box::into_raw(Box::new(TapState {
         port: std::ptr::null_mut(),
-        fn_down: false,
+        held: [false; 2],
     }));
     let events = mask(FLAGS_CHANGED)
         | mask(KEY_DOWN)
@@ -261,9 +262,10 @@ fn on_event_inner(state: &mut TapState, kind: u32, event: CGEventRef) {
             let key_code =
                 unsafe { CGEventGetIntegerValueField(event, K_CG_KEYBOARD_EVENT_KEYCODE) } as u16;
             let flags = unsafe { CGEventGetFlags(event) };
-            let down = keys::function_key_after(state.fn_down, key_code, flags);
-            if down != state.fn_down {
-                state.fn_down = down;
+            let was_down = state.held.contains(&true);
+            state.held = keys::hold_keys_after(state.held, key_code, flags);
+            let down = state.held.contains(&true);
+            if down != was_down {
                 if down {
                     let target = unsafe {
                         CGEventGetIntegerValueField(event, K_CG_EVENT_TARGET_UNIX_PROCESS_ID)
