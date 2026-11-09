@@ -11,7 +11,7 @@ private let logger = Logger(subsystem: "com.bbdaniels.topaz.loupe", category: "V
 /// live-session badges use. The `## Active` task parser lives in
 /// `ActiveTasks.swift`.
 ///
-/// Architecture: see Projects/obsidian/ClaudeHUD/Technical Notes.md
+/// Architecture: see Projects/obsidian/Topaz/Technical Notes.md (ClaudeHUD/ until the vault folder moves)
 /// §Vault/Projects tab redistribution. The HUD is a window over the
 /// archive; this service does no synthesis — every value rendered in
 /// the Projects tab is a verbatim slice of a vault file.
