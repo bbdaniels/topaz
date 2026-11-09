@@ -107,19 +107,20 @@ enum FixedTab: String, CaseIterable {
     var icon: String {
         switch self {
         case .history: return "clock.arrow.circlepath"
-        case .vault: return "briefcase"               // overridden by ClaudeLogo asset; see assetIcon.
+        case .vault: return "briefcase"               // overridden by the TopazLogo asset; see assetIcon.
         case .today: return "calendar"
         case .library: return "books.vertical.fill"
         }
     }
 
     /// Image asset name to use INSTEAD of the SF Symbol for this tab, when set.
-    /// The Projects tab wears the Claude logo (it absorbed the header's old
-    /// standalone logo, 2026-08-31); Library keeps its SF Symbol so the logo
-    /// stays unique in the strip.
+    /// The Projects tab wears the Topaz gem (it absorbed the header's old
+    /// standalone logo, 2026-08-31, and the gem replaced the Claude mark,
+    /// 2026-11-08); Library keeps its SF Symbol so the logo stays unique in
+    /// the strip.
     var assetIcon: String? {
         switch self {
-        case .vault: return "ClaudeLogo"
+        case .vault: return "TopazLogo"
         default: return nil
         }
     }
@@ -374,7 +375,7 @@ struct TabBar: View {
     private func fixedTab(_ tab: FixedTab) -> some View {
         Group {
             if let asset = tab.assetIcon {
-                // Brand-colored (orange) and slightly larger than the SF
+                // Brand-colored (the gem) and slightly larger than the SF
                 // symbols: Projects is the control panel, so its glyph anchors
                 // the strip. Dim, don't tint, when inactive.
                 Image(asset)
