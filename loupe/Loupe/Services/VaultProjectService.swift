@@ -1,0 +1,339 @@
+import Foundation
+import Combine
+import CoreServices
+import os
+
+private let logger = Logger(subsystem: "com.bbdaniels.topaz.loupe", category: "VaultProjectService")
+
+/// Lists projects in the Obsidian vault and surfaces their canonical
+/// per-project metadata (the `Tasks.md` frontmatter: status, updated, cwds,
+/// manuscript, parent) for the Projects tab, plus the cwd → project join the
+/// live-session badges use. The `## Active` task parser lives in
+/// `ActiveTasks.swift`.
+///
+/// Architecture: see Projects/obsidian/ClaudeHUD/Technical Notes.md
+/// §Vault/Projects tab redistribution. The HUD is a window over the
+/// archive; this service does no synthesis — every value rendered in
+/// the Projects tab is a verbatim slice of a vault file.
+@MainActor
+final class VaultProjectService: ObservableObject {
+
+    // MARK: - Public types
+
+    /// The project model lives in `VaultProjectTree.swift` (Foundation-only, so
+    /// the unit tests compile it directly) together with the scan and the
+    /// parent → children tree.
+    typealias Project = VaultProject
+
+    // MARK: - Published state
+
+    @Published private(set) var projects: [Project] = []
+
+    // MARK: - Configuration
+
+    private(set) var vaultPath: URL?
+
+    /// Bumped at the start of every `refresh()`; a scan publishes only if it
+    /// is still the newest, so a slow scan that finishes after
+    /// a later one can never overwrite fresher results.
+    private var scanGeneration = 0
+
+    // MARK: - Lifecycle
+
+    func start(vaultPath: URL?) {
+        self.vaultPath = vaultPath
+        refresh()
+        watch(vaultPath)
+        startFallback()
+    }
+
+    /// A rescan every `fallbackInterval` whatever FSEvents says, so a missed
+    /// or dropped event costs at most a minute, never a stale list until the
+    /// tab is reopened. Idempotent.
+    static let fallbackInterval: TimeInterval = 60
+    private var fallback: DispatchSourceTimer?
+
+    private func startFallback() {
+        guard fallback == nil else { return }
+        let t = DispatchSource.makeTimerSource(queue: .main)
+        t.schedule(deadline: .now() + Self.fallbackInterval, repeating: Self.fallbackInterval,
+                   leeway: .seconds(5))
+        t.setEventHandler { [weak self] in Task { @MainActor in self?.refresh() } }
+        t.resume()
+        fallback = t
+    }
+
+    /// The newest scan's projects: waits for the scan in flight, or runs one
+    /// when none has published. For callers outside the Projects tab (the
+    /// daily note) that need the list without reading the vault themselves.
+    func currentProjects() async -> [Project] {
+        if let scanTask { await scanTask.value }
+        if projects.isEmpty, vaultPath != nil { await refresh().value }
+        return projects
+    }
+    private var scanTask: Task<Void, Never>?
+
+    // MARK: - Watching the vault
+
+    /// FSEvents stream over the vault. Any write to a `Tasks.md` (a session
+    /// ticking a task, the 15-minute sync pulling another machine's edits, the
+    /// daily review) re-scans, so the Projects tab never shows an overdue task
+    /// that the vault has already closed or re-dated, and so does a top-level
+    /// folder created, removed or renamed, or a batch FSEvents dropped
+    /// (`VaultWatch.needsRescan`; 2026-11-08, a project folder that arrived
+    /// whole was reported as the folder alone and never listed). Before
+    /// 2026-10-26 the list refreshed only when the tab appeared.
+    private var eventStream: FSEventStreamRef?
+
+    private func watch(_ vault: URL?) {
+        if let stream = eventStream {
+            FSEventStreamStop(stream)
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+            eventStream = nil
+        }
+        guard let vault else { return }
+        // FSEvents reports real paths, so compare against the resolved root.
+        watchedRoot = realpath(vault.path, nil).map { p in defer { free(p) }; return String(cString: p) }
+            ?? vault.path
+        var context = FSEventStreamContext(
+            version: 0, info: Unmanaged.passUnretained(self).toOpaque(),
+            retain: nil, release: nil, copyDescription: nil)
+        let callback: FSEventStreamCallback = { _, info, count, paths, flags, _ in
+            guard let info,
+                  let changed = unsafeBitCast(paths, to: NSArray.self) as? [String] else { return }
+            let service = Unmanaged<VaultProjectService>.fromOpaque(info).takeUnretainedValue()
+            let flagList = (0..<count).map { UInt32(flags[$0]) }
+            // The stream's queue is main, so the service's state is safe here.
+            MainActor.assumeIsolated {
+                guard VaultWatch.needsRescan(paths: changed, flags: flagList, vault: service.watchedRoot) else { return }
+                service.refresh()
+            }
+        }
+        // A one-second latency coalesces a sync's burst of writes into one
+        // scan; `refresh()`'s generation guard handles any overlap.
+        guard let stream = FSEventStreamCreate(
+            nil, callback, &context, [vault.path] as CFArray,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 1.0,
+            FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes)
+        ) else {
+            logger.error("could not watch the vault at \(vault.path, privacy: .public)")
+            return
+        }
+        FSEventStreamSetDispatchQueue(stream, .main)
+        FSEventStreamStart(stream)
+        eventStream = stream
+    }
+
+    private var watchedRoot = ""
+
+    /// Re-scan the vault. Call from view `onAppear` or explicitly after
+    /// the vault changes. NOT cheap: it reads every project's `Tasks.md` in
+    /// full. While the vault lived in iCloud (until 2026-10-15) a cold scan
+    /// blocked 0.5–2 s per file (a 39 s main-thread hang when this ran
+    /// synchronously). The scan therefore runs detached; only the
+    /// publish touches the main actor. Fire-and-forget; `await` it when
+    /// the caller needs the fresh list.
+    @discardableResult
+    func refresh() -> Task<Void, Never> {
+        scanGeneration &+= 1
+        let generation = scanGeneration
+        guard let vault = vaultPath else {
+            projects = []
+            return Task {}
+        }
+        let task = Task { [weak self] in
+            let out = await Task.detached(priority: .userInitiated) {
+                VaultProject.scan(vaultPath: vault)
+            }.value
+            guard let self, generation == self.scanGeneration else { return }
+            self.projects = out
+            self.scanTask = nil
+            logger.info("vault projects refreshed: \(out.count) total, \(out.filter { $0.isActive }.count) active")
+        }
+        scanTask = task
+        return task
+    }
+
+    /// Insert (or replace) one project parsed from `folder`, re-sorted into
+    /// place, without waiting for a full scan — used right after "New
+    /// Project" so the row appears at once. Parses via the same
+    /// `VaultProject.parse` as the scan; one small folder, so a main-actor read
+    /// of a just-written (never evicted) file is fine. Returns the project.
+    @discardableResult
+    func insertProject(folder: URL) -> Project? {
+        guard let p = VaultProject.parse(folder: folder) else { return nil }
+        var out = projects.filter { $0.name != p.name }
+        out.append(p)
+        projects = VaultProject.sorted(out)
+        return p
+    }
+
+    // MARK: - Canonical cwd → vault-folder resolution (the session → project join key)
+
+    /// Cache of repo working-directory → resolved vault folder NAME. The value
+    /// is itself optional: `.some(nil)` records a cwd that resolves to NO
+    /// project (so it is not re-scanned); an absent key means "not yet
+    /// resolved." Keyed by absolute cwd. Primed off the main actor by
+    /// `primeResolution`; read synchronously via `folderName(forCwd:)`.
+    private var cwdFolderCache: [String: String?] = [:]
+
+    /// Resolve every cwd in `cwds` to its vault folder using the ONE canonical
+    /// rule, `ProjectResolver.resolveFolder` (the longest matching `cwds:`
+    /// claim wins; with none, the cwd's normalized `git remote get-url origin`
+    /// against `repo:`), caching the results. The disk scan and the git calls
+    /// (themselves cached per cwd by `RepoLocator`) run off the main actor; only the
+    /// small cache merge touches the actor. Call this before reading
+    /// `folderName(forCwd:)` in a render path so lookups are warm. Cheap on
+    /// repeat: only cache misses are scanned.
+    func primeResolution(forCwds cwds: Set<String>) async {
+        guard let vaultRoot = vaultPath?.path else { return }
+        let misses = cwds.filter { cwdFolderCache[$0] == nil }
+        guard !misses.isEmpty else { return }
+        let resolved: [String: String?] = await Task.detached(priority: .userInitiated) {
+            var out: [String: String?] = [:]
+            for cwd in misses {
+                out[cwd] = ProjectResolver.resolveFolder(cwd: cwd, vaultPath: vaultRoot)
+            }
+            return out
+        }.value
+        for (k, v) in resolved { cwdFolderCache[k] = v }
+    }
+
+    /// Cached resolved vault folder NAME for a repo cwd (nil = unclaimed, or
+    /// not yet primed). Pure cache read — call `primeResolution(forCwds:)`
+    /// first. Matches `Project.name` (the folder basename) for filtering.
+    func folderName(forCwd cwd: String) -> String? {
+        cwdFolderCache[cwd] ?? nil
+    }
+
+    // MARK: - Per-session filing (claim, then dominant record cwd, then start cwd)
+
+    /// Session id → the project folder `SessionFiling.resolveFolder` gave it
+    /// (`.some(nil)`: no project). Rebuilt for the sessions passed to
+    /// `primeFiling`; read through `folder(forSession:cwd:)`.
+    private var sessionFolderCache: [String: String?] = [:]
+
+    /// Resolve the filing of each `(sessionId, cwd, host)` by the one rule in
+    /// `SessionFiling`: the claim record (from the claims of the host the
+    /// session ran on), else the project most of its transcript's records
+    /// ran in (`cwdCounts`, from the transcript index), else its start
+    /// directory; an iMac session's directories are mapped onto this Mac
+    /// first. The claim files and every directory resolution are read off
+    /// the main actor. Re-run whenever the sessions, the index's tallies or
+    /// either claims directory change; each call re-reads the claims, so the
+    /// latest write wins.
+    func primeFiling(sessions: [(sessionId: String, cwd: String, host: SessionHost)],
+                     cwdCounts: [String: [String: Int]]) async {
+        guard let vaultRoot = vaultPath?.path, !sessions.isEmpty else { return }
+        let known = cwdFolderCache
+        let result: (filed: [String: String?], resolved: [String: String?]) =
+            await Task.detached(priority: .userInitiated) {
+                var resolved: [String: String?] = [:]
+                func resolve(_ cwd: String) -> String? {
+                    if let hit = known[cwd] { return hit }
+                    if let hit = resolved[cwd] { return hit }
+                    let folder = ProjectResolver.resolveFolder(cwd: cwd, vaultPath: vaultRoot)
+                    resolved[cwd] = folder
+                    return folder
+                }
+                var filed: [String: String?] = [:]
+                for s in sessions where !s.sessionId.isEmpty {
+                    filed[s.sessionId] = SessionFiling.resolveFolder(
+                        claim: SessionFiling.readClaim(sessionId: s.sessionId, in: s.host.claimsDir()),
+                        cwdCounts: cwdCounts[s.sessionId] ?? [:],
+                        fallbackCwd: s.cwd, host: s.host,
+                        projectExists: { folder in
+                            var isDir: ObjCBool = false
+                            return FileManager.default.fileExists(
+                                atPath: (vaultRoot as NSString).appendingPathComponent(folder),
+                                isDirectory: &isDir) && isDir.boolValue
+                        },
+                        resolve: resolve)
+                }
+                return (filed, resolved)
+            }.value
+        for (k, v) in result.resolved { cwdFolderCache[k] = v }
+        for (k, v) in result.filed { sessionFolderCache[k] = v }
+    }
+
+    /// Prime both caches for the live roster (and `history`, the History
+    /// sessions the Projects tab files for its recency), so
+    /// `liveSessionsByFolder` and `generalSessions` file every live session
+    /// by the full rule. The Projects tab calls it while it is shown; the
+    /// menu bar's Open Sessions calls it before it lists, so the two never
+    /// file a session differently.
+    func primeLive(_ agents: [AgentSession], lostTreeCwds: [String] = [],
+                   history: [(sessionId: String, cwd: String, host: SessionHost)] = [],
+                   cwdCounts: [String: [String: Int]]) async {
+        await primeResolution(forCwds: Set((agents.map(\.cwd) + lostTreeCwds)
+            .map { SessionFiling.repoCwd($0) }).filter { !$0.isEmpty })
+        let live = agents.compactMap { a in
+            a.sessionId.map { (sessionId: $0, cwd: a.cwd, host: a.isIMac ? SessionHost.iMac : SessionHost.mac) }
+        }
+        await primeFiling(sessions: history + live, cwdCounts: cwdCounts)
+    }
+
+    /// The project a session is filed under. A session `primeFiling` has
+    /// seen reads its filed folder; any other falls back to its start
+    /// directory (worktrees collapsed), which is step 3 of the same rule.
+    func folder(forSession sessionId: String?, cwd: String) -> String? {
+        if let sessionId, let filed = sessionFolderCache[sessionId] { return filed }
+        let repo = SessionFiling.repoCwd(cwd)
+        return repo.isEmpty ? nil : folderName(forCwd: repo)
+    }
+
+    // MARK: - Live sessions per project
+
+    /// folder name → every running session among `agents`, attached to a
+    /// terminal or not (an unattached one opens in a new tab). THE
+    /// session-to-project join for anything that acts on a project's open
+    /// windows: the Projects badges, the badge's click-to-focus, and the
+    /// launcher's window-or-tab decision all read it, so they cannot disagree
+    /// about which sessions belong to a project. Unsorted: ordering is only
+    /// needed on click, and the Projects list calls this on every body pass.
+    func liveSessionsByFolder(in agents: [AgentSession]) -> [String: [AgentSession]] {
+        var map: [String: [AgentSession]] = [:]
+        for a in agents {
+            guard a.isAlive, !a.cwd.isEmpty,
+                  let folder = folder(forSession: a.sessionId, cwd: a.cwd) else { continue }
+            // Only the three badged states: a live session in an
+            // unrecognized daemon state (`.other`) must not be click-cyclable
+            // when the badge never advertised it.
+            switch a.liveState {
+            case .working, .needsInput, .idle: break
+            default: continue
+            }
+            map[folder, default: []].append(a)
+        }
+        return map
+    }
+
+    /// Live sessions filed under no project: most often one started in
+    /// ~/Projects itself, from the phone's New session or the `>_` button.
+    /// The Projects tab lists them under General at the top (Ben,
+    /// 2026-11-03) until work in a project folder or `/project` files them.
+    func generalSessions(in agents: [AgentSession]) -> [AgentSession] {
+        agents.filter { a in
+            guard a.isAlive, [.working, .needsInput, .idle].contains(a.liveState) else { return false }
+            return a.cwd.isEmpty || folder(forSession: a.sessionId, cwd: a.cwd) == nil
+        }
+    }
+
+    /// The live sessions of `folders`, merged, most recently active first: one
+    /// folder for a project's own sessions (a child row's badge, and every
+    /// launch), a parent's folder plus its children's for the parent row's
+    /// badge.
+    ///
+    /// `updatedAt` alone is not the recency: the daemon flushes `state.json`
+    /// event-driven and can lag minutes behind an actively working session,
+    /// while the transcript ticks on every turn — so the later of the two is
+    /// the honest ordering.
+    func liveSessions(forFolders folders: [String], in agents: [AgentSession]) -> [AgentSession] {
+        func recency(_ a: AgentSession) -> Date {
+            max(a.updatedAt ?? .distantPast, a.transcriptMtime ?? .distantPast)
+        }
+        let byFolder = liveSessionsByFolder(in: agents)
+        return folders.flatMap { byFolder[$0] ?? [] }.sorted { recency($0) > recency($1) }
+    }
+}

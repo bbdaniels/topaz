@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>Loupe</string>
+	<key>CFBundleDisplayName</key>
+	<string>Loupe</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSContactsUsageDescription</key>
+	<string>Loupe looks up attendee names and organizations for meeting briefings.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Loupe displays today's calendar events and prepares meeting briefings.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Loupe shows your reminders in the What's Next panel and lets you complete them.</string>
+	<key>NSAccessibilityUsageDescription</key>
+	<string>Loupe blocks stray input while the screen cover is up and hears its global shortcuts.</string>
+	<key>NSUserNotificationUsageDescription</key>
+	<string>Loupe shows desktop notifications when Claude needs your attention.</string>
+</dict>
+</plist>

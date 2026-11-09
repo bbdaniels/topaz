@@ -1,0 +1,203 @@
+# Loupe
+
+A macOS menu bar app that puts Claude Code at your fingertips. Loupe is a lightweight, always-available floating panel for browsing past sessions and surfacing context from your calendar, email, and Obsidian notes -- all without leaving your current workflow.
+
+![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue)
+![Swift](https://img.shields.io/badge/Swift-5.9-orange)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+<p align="center">
+  <img src="docs/screenshot.png" alt="Loupe floating panel showing recent sessions grouped by project" width="320">
+</p>
+
+## What it is
+
+Loupe is a SwiftUI wrapper around the [Claude CLI](https://docs.anthropic.com/en/docs/claude-code), plus productivity overlays that pull from the apps you already use. Click the menu bar icon and the floating panel snaps open on any Space:
+
+- **History** -- full-text search across every Claude Code session on your machine, grouped by project
+- **Today** -- AI-briefed daily calendar with email + Obsidian cross-references
+- **Projects** -- one row per Obsidian vault project, with live-session badges and one-click launch; subprojects nest under their parent
+- **Obsidian** -- multi-vault note browser with floating preview windows
+- **Substack** -- inline reader for your Substack inbox
+- **Notifications** -- desktop + iPhone/Apple Watch alerts when Claude needs attention
+
+The CLI handles auth, tool execution, and MCP connections. Loupe provides the UI and the cross-app context.
+
+## Features
+
+**Session history** -- Browse all past Claude Code sessions across every project on your machine. Sessions are grouped by project and parent folder with collapsible dropdowns. Launch a new session in any project with one click, or expand to resume a specific past session. Per-project controls include:
+- **Full-text search** -- Search across all message content in your session history. Uses a two-phase approach: binary pre-filter eliminates non-matching files without JSON parsing, then concurrent targeted parsing extracts context snippets. Results stream in progressively with ~80-char snippets showing the match in context.
+
+**Today tab** -- Your daily calendar with AI-powered intelligence:
+- "Your Day" summary at the top -- Claude reads your full schedule and writes a conversational briefing with tips
+- Date navigation with `<` `>` arrows to browse past and future days
+- All events from EventKit (works with any calendar app)
+- Expandable events showing attendees, Zoom links, location
+- Claude-generated meeting prep: what it's about, recent developments, what to prepare
+- Cross-references Spark email and Obsidian notes automatically
+- Attendee name/org resolution via Spark contacts, message headers, and macOS Contacts
+- Briefings preloaded and cached to disk (instant on revisit)
+- Click email threads to expand full body content
+
+**Projects tab** -- One row per Obsidian vault project (a top-level folder with a `Tasks.md`), grouped by recent activity. Each row shows badges for its live Claude Code sessions (click to focus their WezTerm tabs) and a launch button that opens a new session with the project's vault context. A project whose `Tasks.md` frontmatter declares `parent: <folder>` is shown inset under that project, and the parent row sums its children's badges. Sessions are attributed to projects by the `cwds:` frontmatter, longest match wins.
+
+**Terminal integration** -- Sessions open as tabs in one WezTerm window (`/Applications/WezTerm.app`). Clicking a session focuses the tab it is already in, or opens one: an iMac session's tab is titled with its tmux session name (`rc-<name>`), a Mac session's `<project> (Mac)`. Loupe drives WezTerm through `wezterm cli` and brings it forward through NSWorkspace, so it needs no Apple Events permission. Closing a tab only detaches; the session runs on until it is stopped from Loupe.
+
+**Obsidian notes** -- Browse and preview your Obsidian vault directly in the app. Click the archive box icon in the tab bar to access:
+- Multi-vault support with persistent vault selection
+- Recursive folder browsing with collapsible tree
+- Multi-word search across all notes
+- Click a note to open it in a floating HUD-style window
+- Edit/preview toggle with auto-save
+- Rendered markdown with math, tables, code blocks, and interactive checkboxes
+- Wikilinks rendered as clickable Obsidian links
+- Vault-relative image rendering
+- Right-click any note to open in Obsidian
+
+**Substack reader** -- Read your Substack feed inline without leaving the app:
+- Authenticated via `substack.sid` cookie (configure in the info popover)
+- Inbox-style feed with unread/read tracking (seeded from Substack's own read state)
+- Click to expand -- fetches full post body from Substack's API, renders as plain text
+- Save/bookmark posts locally with persistent state
+- Search across post titles, authors, and publications
+- Paginated feed (up to 100 posts), with 1-hour cache
+- Reaction and comment counts shown on expanded posts
+- "Mark all read" for inbox zero
+
+**Tab visibility** -- Toggle tabs on and off from the info popover. Each tab has a switch to show or hide it from the tab bar. History is always visible.
+
+**People tab** -- Contact directory resolved from calendar attendees, Spark email headers, and macOS Contacts.
+
+**Push notifications** -- Get notified when Claude needs attention. Click the bell icon to configure:
+- **Desktop** -- macOS notification banners via the system notification center
+- **Mobile** -- Push to iPhone and Apple Watch via [ntfy.sh](https://ntfy.sh)
+
+To set up mobile notifications:
+1. Install the [ntfy app](https://ntfy.sh) on your iPhone
+2. Subscribe to a topic name of your choice (e.g. `claude-myname`)
+3. In Loupe, click the bell icon, enable Mobile, and paste the same topic name
+4. Click "Test notification" to verify
+
+Notifications fire on `AskUserQuestion` and `PermissionRequest` hooks. Loupe automatically installs the hook script to `~/.claude/hooks/` -- no manual setup needed.
+
+**Rich markdown rendering** -- Claude's responses render with full markdown support:
+- Headings, bold, italic, inline code, strikethrough
+- Fenced code blocks
+- Tables with alternating row colors
+- Ordered and unordered lists with nesting
+- Task lists with checkboxes
+- Blockquotes and GitHub-flavored alerts
+- Horizontal rules
+- LaTeX math via KaTeX (display blocks) and Unicode conversion (inline)
+
+**Tool call visualization** -- See what tools Claude is using in real time, with expandable details showing arguments and results.
+
+**MCP server support** -- Connects to any MCP servers configured in your Claude environment.
+
+**Info panel** -- Click the (i) icon in the header for a quick setup guide and dependency status checks.
+
+**Always available** -- Floating panel accessible from the menu bar on any Space or desktop. Click the menu bar icon to toggle, right-click for quick actions. Loupe also has a Dock icon and a Cmd-Tab entry, and a Dock click brings the panel forward.
+
+## Requirements
+
+- macOS 14.0+
+- [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) installed (`claude` command available in PATH)
+- Python 3 (required for permission approval hooks)
+- [Fira Sans](https://fonts.google.com/specimen/Fira+Sans) and [Fira Code](https://fonts.google.com/specimen/Fira+Code) fonts (optional -- falls back to system fonts)
+- Spark Desktop (optional -- for email intel in Today/Projects tabs)
+- Obsidian (optional -- for vault browsing and note cross-referencing)
+
+## Building
+
+Clone and build with [XcodeGen](https://github.com/yonaskolb/XcodeGen):
+
+```bash
+brew install xcodegen  # if not already installed
+xcodegen generate
+xcodebuild -scheme Loupe -configuration Debug build
+```
+
+Or open `Loupe.xcodeproj` in Xcode and build with Cmd+B.
+
+The built app will be in `~/Library/Developer/Xcode/DerivedData/Loupe-*/Build/Products/Debug/Loupe.app`.
+
+Unit tests (the pure, Foundation-only logic such as the Claude process classifier; no host app):
+
+```bash
+xcodebuild test -scheme LoupeTests -destination 'platform=macOS'
+```
+
+`Loupe --process-report` prints the menu's Background Jobs and Orphans sections and the classification of every Claude worker, then exits. It is read-only and safe to run while the menu-bar app is running.
+
+`Loupe --remote-control on|off|status` turns the persistent Remote Control server (launchd agent `com.bbdaniels.claude-remote-control`, the header antenna) on or off, or prints its state; the same load and unload as the header toggle. The server's sessions are its child processes, so a restart or turn-off would end them all: while it has a live session, the header toggle's change waits and is applied once the last one ends (the antenna's status line says so), and the command line refuses and changes nothing.
+
+## How it works
+
+Loupe wraps the [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) in a native SwiftUI interface. It launches `claude` as a subprocess with `--output-format stream-json` for real-time streaming, and maintains session IDs for multi-turn conversations. The CLI handles all the heavy lifting -- authentication, tool execution, MCP connections -- while Loupe provides the UI layer.
+
+The app searches for the Claude CLI in common installation paths:
+- `~/.local/bin/claude`
+- `/usr/local/bin/claude`
+- `/opt/homebrew/bin/claude`
+- `~/.npm-global/bin/claude`
+- `~/.claude/local/claude`
+- Falls back to PATH lookup
+
+## Architecture
+
+```
+Loupe/
+  App/
+    LoupeApp.swift     # App entry, menu bar setup
+    AppState.swift         # Global state, services
+  Models/
+    NoteFile.swift         # Obsidian file tree model
+    SubstackModels.swift   # Substack publication, post, API response types
+    VaultSettings.swift    # Vault config, security-scoped bookmarks
+  Views/
+    HUDPanel/
+      HUDPanelController.swift  # NSPanel floating window
+      HUDContentView.swift      # Main layout, tabs, history, info
+    Shared/
+      MarkdownBlocks.swift # Markdown block renderers + LaTeX/KaTeX
+    Obsidian/
+      ObsidianBrowserView.swift       # Vault browser, search, file tree
+      ObsidianMarkdownView.swift      # Extended markdown with checkboxes, images, wikilinks
+      NoteContentView.swift           # Edit/preview note window content
+      FloatingNoteWindowManager.swift # Floating note window management
+    Today/
+      TodayView.swift                 # Daily calendar with AI meeting briefings
+    Vault/
+      VaultTabView.swift              # Projects tab: project rows, nested subprojects, launch
+    Substack/
+      SubstackView.swift              # Inbox-style Substack reader
+    Settings/
+      SettingsView.swift   # Settings UI
+  Services/
+    CalendarService.swift          # EventKit integration, live updates
+    BriefingService.swift          # AI meeting briefings with Claude
+    SparkService.swift             # Spark email DB (FTS + messages)
+    VaultProjectTree.swift         # Project model, frontmatter reader, cwd resolver, parent tree
+    VaultProjectService.swift      # Vault project list, session-to-project join
+    VaultManager.swift             # Obsidian vault state, file loading
+    PushNotificationManager.swift  # Hook install, settings.json management
+    SubstackService.swift          # Substack API client, cookie auth, caching
+    SessionHistoryService.swift    # Scan ~/.claude/projects/ for past sessions
+    TerminalService.swift          # Terminal app detection, selection, command launch
+    PermissionWatcherService.swift # Monitor pending permission requests
+    SecretsVault.swift             # Secrets cache, one Keychain item
+    SecurityTool.swift             # Keychain through /usr/bin/security
+    HotkeyService.swift            # Global hotkey registration
+    RemoteControlServerService.swift # launchd agent for claude remote-control
+    RemoteControlReload.swift        # when it may restart: waits for its live sessions
+  Resources/
+    Assets.xcassets/       # App icons and images
+    ntfy-notify.sh         # Bundled notification hook script
+    permission-watcher.sh  # Bundled permission watcher hook script
+    Info.plist
+    Loupe.entitlements
+```
+
+## License
+
+MIT

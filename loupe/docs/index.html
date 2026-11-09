@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ClaudeHUD &mdash; Claude in Your Menu Bar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      color: #8a9baa;
+      background: #15202b;
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    h1, h2, h3 {
+      font-family: 'Source Serif 4', Georgia, serif;
+      color: #e8edf2;
+    }
+
+    a { color: #4a9fd4; }
+    a:hover { color: #6cb4e0; }
+
+    /* -- Nav ------------------------------------------------ */
+    nav {
+      border-bottom: 1px solid #2a3a48;
+      padding: 0 24px;
+    }
+
+    .nav-inner {
+      max-width: 820px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 56px;
+    }
+
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      color: #e8edf2;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .nav-logo svg { width: 22px; height: 22px; }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: #5a7080;
+    }
+
+    .nav-links a {
+      text-decoration: none;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: #8a9baa;
+    }
+
+    .nav-links a:hover { color: #e8edf2; }
+
+    /* -- Header --------------------------------------------- */
+    .header {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 64px 24px 48px;
+      border-bottom: 1px solid #2a3a48;
+    }
+
+    .header h1 {
+      font-size: 2.2rem;
+      font-weight: 700;
+      line-height: 1.25;
+      margin-bottom: 8px;
+      letter-spacing: -0.01em;
+    }
+
+    .header .subtitle {
+      font-size: 1rem;
+      color: #5a7080;
+      margin-bottom: 20px;
+    }
+
+    .header .lead {
+      font-size: 1.05rem;
+      color: #8a9baa;
+      max-width: 640px;
+      line-height: 1.75;
+    }
+
+    .header .cta-row {
+      margin-top: 28px;
+      display: flex;
+      gap: 10px;
+    }
+
+    .header .hero-shot {
+      margin-top: 36px;
+      text-align: center;
+    }
+
+    .header .hero-shot img {
+      max-width: 320px;
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 16px;
+      font-size: 0.9rem;
+      font-family: inherit;
+      font-weight: 500;
+      background: #1a2530;
+      border: 1px solid #2a3a48;
+      border-radius: 4px;
+      color: #8a9baa;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .btn:hover {
+      background: #223040;
+      color: #e8edf2;
+    }
+
+    .btn svg { width: 16px; height: 16px; }
+
+    /* -- Main content --------------------------------------- */
+    main {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    section {
+      padding: 48px 0;
+      border-bottom: 1px solid #2a3a48;
+    }
+
+    section:last-of-type {
+      border-bottom: none;
+    }
+
+    section h2 {
+      font-size: 1.4rem;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+
+    section p {
+      margin-bottom: 14px;
+      color: #8a9baa;
+    }
+
+    section p:last-child {
+      margin-bottom: 0;
+    }
+
+    /* -- Feature list --------------------------------------- */
+    .feature-list {
+      list-style: none;
+      margin-top: 20px;
+    }
+
+    .feature-list li {
+      padding: 14px 0;
+      border-bottom: 1px solid #2a3a48;
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+    }
+
+    .feature-list li:last-child {
+      border-bottom: none;
+    }
+
+    .feature-label {
+      font-size: 0.95rem;
+      color: #e8edf2;
+      font-weight: 500;
+      min-width: 160px;
+      flex-shrink: 0;
+    }
+
+    .feature-desc {
+      font-size: 0.9rem;
+      color: #8a9baa;
+      line-height: 1.6;
+    }
+
+    /* -- Permission cards ----------------------------------- */
+    .perm-row {
+      display: flex;
+      gap: 16px;
+      margin-top: 20px;
+    }
+
+    .perm-card {
+      flex: 1;
+      background: #0f1a22;
+      border: 1px solid #2a3a48;
+      border-radius: 4px;
+      padding: 16px 18px;
+    }
+
+    .perm-card h3 {
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .perm-card.plan h3 { color: #4ade80; }
+    .perm-card.safe h3 { color: #f59e0b; }
+    .perm-card.unsafe h3 { color: #ef4444; }
+
+    .perm-card p {
+      font-size: 0.82rem;
+      color: #5a7080;
+      line-height: 1.5;
+      margin: 0;
+    }
+
+    /* -- Code block ----------------------------------------- */
+    .diagram {
+      background: #0f1a22;
+      border: 1px solid #2a3a48;
+      border-radius: 4px;
+      padding: 28px 32px;
+      margin: 24px 0;
+      overflow-x: auto;
+    }
+
+    .diagram pre {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 0.8rem;
+      line-height: 1.7;
+      color: #8a9baa;
+      margin: 0;
+    }
+
+    .diagram .cmd { color: #e8edf2; }
+    .diagram .cmt { color: #5a7080; }
+
+    /* -- Requirements --------------------------------------- */
+    .req-list {
+      list-style: none;
+      margin-top: 16px;
+    }
+
+    .req-list li {
+      padding: 8px 0;
+      border-bottom: 1px solid #2a3a48;
+      font-size: 0.95rem;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .req-list li:last-child {
+      border-bottom: none;
+    }
+
+    .req-check {
+      color: #4ade80;
+      font-size: 0.85rem;
+    }
+
+    .req-opt {
+      color: #5a7080;
+      font-size: 0.85rem;
+    }
+
+    /* -- Footer --------------------------------------------- */
+    footer {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 32px 24px 48px;
+      font-size: 0.82rem;
+      color: #5a7080;
+    }
+
+    /* -- Note ----------------------------------------------- */
+    .note {
+      background: #1a2530;
+      border: 1px solid #2a3a48;
+      border-radius: 4px;
+      padding: 14px 18px;
+      margin-top: 20px;
+      font-size: 0.88rem;
+      color: #5a7080;
+      line-height: 1.6;
+    }
+
+    /* -- Responsive ----------------------------------------- */
+    @media (max-width: 640px) {
+      .header { padding: 40px 16px 36px; }
+      .header h1 { font-size: 1.7rem; }
+      main { padding: 0 16px; }
+      section { padding: 36px 0; }
+      .perm-row { flex-direction: column; gap: 10px; }
+      .feature-list li { flex-direction: column; gap: 4px; }
+      .feature-label { min-width: auto; }
+      .header .cta-row { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <div class="nav-inner">
+      <a class="nav-logo" href="/">
+        <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+          <path d="M50 10 L53 40 L80 25 L57 45 L90 50 L57 55 L80 75 L53 60 L50 90 L47 60 L20 75 L43 55 L10 50 L43 45 L20 25 L47 40 Z" fill="#e8edf2"/>
+        </svg>
+        ClaudeHUD
+      </a>
+      <div class="nav-links">
+        <a href="https://github.com/bbdaniels/ClaudeHUD">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="header">
+    <h1>ClaudeHUD</h1>
+    <div class="subtitle">Claude in Your Menu Bar</div>
+    <p class="lead">
+      A macOS menu bar app that puts Claude at your fingertips.
+      Multi-tab conversations, session history, Obsidian notes, terminal integration,
+      push notifications, and rich markdown with KaTeX math &mdash;
+      all in a lightweight floating panel without leaving your workflow.
+    </p>
+    <div class="cta-row">
+      <a class="btn" href="https://github.com/bbdaniels/ClaudeHUD">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        View on GitHub
+      </a>
+      <a class="btn" href="https://github.com/bbdaniels/ClaudeHUD/releases">
+        Download
+      </a>
+    </div>
+    <div class="hero-shot">
+      <img src="screenshot.png" alt="ClaudeHUD floating panel showing recent sessions grouped by project">
+    </div>
+  </div>
+
+  <main>
+
+    <section>
+      <h2>Features</h2>
+      <ul class="feature-list">
+        <li>
+          <span class="feature-label">Session history</span>
+          <span class="feature-desc">Browse all past Claude Code sessions across every project. Launch new sessions or resume old ones with one click. Per-project star/pin &mdash; remembered across launches.</span>
+        </li>
+        <li>
+          <span class="feature-label">Obsidian notes</span>
+          <span class="feature-desc">Browse and preview your Obsidian vault directly in the app. Multi-vault support, folder tree, search, floating note windows with edit/preview toggle, interactive checkboxes, wikilinks, images, and auto-save.</span>
+        </li>
+        <li>
+          <span class="feature-label">Terminal integration</span>
+          <span class="feature-desc">Sessions open as tabs in one WezTerm window. Clicking a session focuses its tab, or opens one; closing a tab only detaches, and the session runs on.</span>
+        </li>
+        <li>
+          <span class="feature-label">Model switching</span>
+          <span class="feature-desc">Switch between Sonnet, Haiku, and Opus on the fly via the header picker. Choose the right model for the task.</span>
+        </li>
+        <li>
+          <span class="feature-label">Push notifications</span>
+          <span class="feature-desc">Desktop banners and mobile push via ntfy.sh. Get notified on iPhone and Apple Watch when Claude needs attention. Hook scripts auto-installed.</span>
+        </li>
+        <li>
+          <span class="feature-label">Rich markdown</span>
+          <span class="feature-desc">Headings, fenced code blocks, tables, ordered and unordered lists, task lists, blockquotes, GitHub alerts, and horizontal rules &mdash; all rendered natively in SwiftUI.</span>
+        </li>
+        <li>
+          <span class="feature-label">KaTeX math</span>
+          <span class="feature-desc">Display math blocks rendered with KaTeX for publication-quality equations. Inline math uses Unicode conversion.</span>
+        </li>
+        <li>
+          <span class="feature-label">Tool calls</span>
+          <span class="feature-desc">See what tools Claude is using in real time. Expandable cards show arguments, results, and completion status.</span>
+        </li>
+        <li>
+          <span class="feature-label">MCP servers</span>
+          <span class="feature-desc">Connects to any MCP servers configured in your Claude environment. Custom tools and integrations work seamlessly.</span>
+        </li>
+        <li>
+          <span class="feature-label">Info panel</span>
+          <span class="feature-desc">Click the (i) icon in the header for a quick setup guide and dependency status checks.</span>
+        </li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Permission Modes</h2>
+      <p>Control how much autonomy Claude has, switchable at any time from the header.</p>
+      <div class="perm-row">
+        <div class="perm-card plan">
+          <h3>Plan</h3>
+          <p>Claude proposes a plan and asks before taking any action.</p>
+        </div>
+        <div class="perm-card safe">
+          <h3>Safe</h3>
+          <p>Claude reads freely but asks permission for Bash commands.</p>
+        </div>
+        <div class="perm-card unsafe">
+          <h3>Unsafe</h3>
+          <p>No permission checks. Claude runs any command without asking.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Getting Started</h2>
+      <ul class="req-list">
+        <li><span class="req-check">&#10003;</span> macOS 14.0 or later</li>
+        <li><span class="req-check">&#10003;</span> <a href="https://docs.anthropic.com/en/docs/claude-code">Claude CLI</a> installed</li>
+        <li><span class="req-check">&#10003;</span> Python 3 (for permission hooks)</li>
+        <li><span class="req-opt">&#9675;</span> <a href="https://fonts.google.com/specimen/Fira+Sans">Fira Sans</a> &amp; <a href="https://fonts.google.com/specimen/Fira+Code">Fira Code</a> fonts (optional)</li>
+        <li><span class="req-opt">&#9675;</span> <a href="https://obsidian.md">Obsidian</a> (for the notes tab)</li>
+      </ul>
+      <div class="diagram">
+        <pre><span class="cmt"># Clone, generate project, and build</span>
+<span class="cmd">git clone https://github.com/bbdaniels/ClaudeHUD.git</span>
+<span class="cmd">cd ClaudeHUD</span>
+<span class="cmd">brew install xcodegen</span>
+<span class="cmd">xcodegen generate</span>
+<span class="cmd">xcodebuild -scheme ClaudeHUD -configuration Release build</span>
+
+<span class="cmt"># Or just open in Xcode</span>
+<span class="cmd">open ClaudeHUD.xcodeproj</span></pre>
+      </div>
+      <div class="note">
+        <strong>Note on code signing:</strong> The app is ad-hoc signed, so macOS Gatekeeper may show a warning on first launch. Right-click the app and choose "Open" to bypass, or build from source.
+      </div>
+    </section>
+
+    <section>
+      <h2>Mobile Notifications</h2>
+      <p>ClaudeHUD can push notifications to your iPhone and Apple Watch via <a href="https://ntfy.sh">ntfy.sh</a> (free, no account required).</p>
+      <ul class="req-list">
+        <li><span class="req-check">1</span> Install the <a href="https://ntfy.sh">ntfy app</a> on your iPhone</li>
+        <li><span class="req-check">2</span> Subscribe to a topic name of your choice (e.g. <code>claude-myname</code>)</li>
+        <li><span class="req-check">3</span> In ClaudeHUD, click the bell icon, enable Mobile, and paste the same topic name</li>
+        <li><span class="req-check">4</span> Click "Test notification" to verify</li>
+      </ul>
+      <p style="margin-top: 14px;">Notifications fire when Claude asks a question or requests permission, showing the actual question or command description.</p>
+    </section>
+
+    <section>
+      <h2>Architecture</h2>
+      <div class="diagram">
+        <pre>ClaudeHUD/
+  App/
+    ClaudeHUDApp.swift          <span class="cmt"># App entry, menu bar setup</span>
+    AppState.swift              <span class="cmt"># Global state, services</span>
+  Models/
+    NoteFile.swift              <span class="cmt"># Obsidian file tree model</span>
+    VaultSettings.swift         <span class="cmt"># Vault config, bookmarks</span>
+  Views/
+    HUDPanel/
+      HUDPanelController.swift  <span class="cmt"># NSPanel floating window</span>
+      HUDContentView.swift      <span class="cmt"># Main layout, tabs, history, info</span>
+    Shared/
+      MarkdownBlocks.swift      <span class="cmt"># Markdown renderers + KaTeX</span>
+    Obsidian/
+      ObsidianBrowserView.swift <span class="cmt"># Vault browser, search, file tree</span>
+      ObsidianMarkdownView.swift <span class="cmt"># Extended markdown renderer</span>
+      NoteContentView.swift     <span class="cmt"># Edit/preview note windows</span>
+  Services/
+    VaultManager.swift          <span class="cmt"># Obsidian vault state</span>
+    SessionHistoryService.swift <span class="cmt"># Scan past sessions</span>
+    TerminalService.swift       <span class="cmt"># Terminal detection + launch</span>
+    PushNotificationManager.swift <span class="cmt"># Desktop + mobile notifications</span></pre>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    Built by <a href="https://benjaminbdaniels.com">Benjamin Daniels</a> &middot; Licensed under <a href="https://github.com/bbdaniels/ClaudeHUD/blob/main/LICENSE">MIT</a>
+  </footer>
+
+</body>
+</html>

@@ -1,0 +1,110 @@
+# Slack app manifest for the ClaudeHUD Slack teammate.
+# Create at https://api.slack.com/apps?new_app=1 -> "From a manifest" -> bbdaniels workspace.
+# Socket Mode: no public URLs required; the app dials out from the Mac.
+# After creation, mint an app-level token (xapp-, scope connections:write) under
+# Basic Information -> App-Level Tokens; that token opens the socket and is NOT in this manifest.
+display_information:
+  name: Claude
+  description: ClaudeHUD teammate. Per-channel sessions backed by your vault.
+features:
+  app_home:
+    # The DM with the bot is the generic (no-project) surface: plain messages
+    # run scratch-workspace sessions; PM verbs take a project argument. The
+    # messages tab must be explicitly enabled or Slack hides the DM composer.
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: claude
+    always_online: true
+  # Names are prefixed claude- because bare /search, etc. collide with Slack's
+  # reserved built-in commands ("invalid name" at manifest validation).
+  slash_commands:
+    - command: /claude-search
+      description: Search session history
+      should_escape: false
+    - command: /claude-skills
+      description: List this session's skills
+      should_escape: false
+    - command: /claude-agents
+      description: List this session's agents/subagents
+      should_escape: false
+    - command: /claude-new
+      description: Start a fresh session in this channel
+      should_escape: false
+    - command: /claude-mode
+      description: Set permission mode for this channel (plan|default|skip)
+      should_escape: false
+    - command: /claude-status
+      description: Show this channel's config, live turn, and usage headroom
+      should_escape: false
+    - command: /claude-help
+      description: Reprint the interaction grammar and command list
+      should_escape: false
+    - command: /claude-log
+      description: Summarize this channel's recent session activity
+      should_escape: false
+    - command: /claude-resume
+      description: Re-attach the most recent (or given) session
+      should_escape: false
+    - command: /claude-stop
+      description: Kill the live turn (same as the Stop button)
+      should_escape: false
+    - command: /claude-effort
+      description: Set reasoning effort (low|medium|high|xhigh|max)
+      should_escape: false
+    - command: /claude-model
+      description: Set the engine model (sonnet|opus|haiku|fable)
+      should_escape: false
+    - command: /claude-followup
+      description: Default for a mid-turn message (queue|steer|ask)
+      should_escape: false
+    - command: /claude-budget
+      description: Per-turn turn cap (no dollars; tokens bill the subscription)
+      should_escape: false
+    - command: /claude-project
+      description: Bind a project directory and create its channel
+      should_escape: false
+    - command: /claude-sync
+      description: Reconcile vault projects with Slack channels
+      should_escape: false
+    - command: /claude-tasks
+      description: Interactive task card (Done buttons, add to Triage)
+      should_escape: false
+    - command: /claude-brief
+      description: Post this project's briefing (Now / Next / Recently done)
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - channels:read
+      - channels:history
+      - channels:manage
+      - channels:join
+      - groups:read
+      - groups:history
+      - im:read
+      - im:history
+      - im:write
+      - chat:write
+      - commands
+      - reactions:read
+      - reactions:write
+      - files:read
+      - users:read
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.channels
+      - message.groups
+      - message.im
+      - channel_created
+      # Enables 📥/📌 reaction → capture-to-Triage. Covered by the already-
+      # granted reactions:read scope, so saving this needs NO app reinstall.
+      - reaction_added
+  interactivity:
+    is_enabled: true
+  socket_mode_enabled: true
+  org_deploy_enabled: false
+  token_rotation_enabled: false

@@ -1,0 +1,13 @@
+.DS_Store
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+DerivedData/
+build/
+*.ipa
+*.dSYM.zip
+*.dSYM
+.build/
+
+# Claude Code local config
+.claude/
+signing/claudehud-dev.p12
