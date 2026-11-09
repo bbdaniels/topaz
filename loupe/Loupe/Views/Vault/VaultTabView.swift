@@ -770,6 +770,9 @@ struct SessionLineView: View {
             .disabled(stopping || line.sessionId == nil)
             .onHover { dotHovering = $0 }
             .help("Stop this session")
+            // VoiceOver never hovers, so the button is named for its action
+            // whether it shows the dot or the ×.
+            .accessibilityLabel("Stop this session")
             Button(action: onOpen) {
                 HStack(spacing: 6) {
                     Text(line.name)
