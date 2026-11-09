@@ -4,14 +4,14 @@ import os
 
 private let logger = Logger(subsystem: "com.bbdaniels.topaz.launcher", category: "App")
 
-/// Topaz Launcher: Topaz's application launcher (Option-Space) and Magnet's
+/// Topaz Launcher: Topaz's application launcher (Command-Space) and Magnet's
 /// window snapping, as a helper Topaz starts from
 /// `Topaz.app/Contents/Helpers` and supervises (wezterm-gui `helpers.rs`).
 /// It has no Dock icon or menu; it quits when Topaz does.
 @MainActor
 final class LauncherDelegate: NSObject, NSApplicationDelegate {
-    /// Option-Space. Raycast keeps Command-Space until the cutover.
-    static let chord = SnapLayout.Chord(keyCode: 49, modifiers: SnapLayout.option)
+    /// Command-Space, since the cutover from Raycast on 2026-11-08.
+    static let chord = SnapLayout.Chord(keyCode: 49, modifiers: SnapLayout.cmd)
 
     private let hotKeys = HotKeyCenter()
     private let index = AppIndex()
@@ -35,8 +35,8 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate {
         index.start()
         let chord = Self.chord
         switch hotKeys.register(keyCode: chord.keyCode, modifiers: chord.modifiers, { controller.toggle() }) {
-        case .success: logger.info("Option-Space bound")
-        case .failure(let e): logger.error("Option-Space refused: \(e.status, privacy: .public)")
+        case .success: logger.info("Command-Space bound")
+        case .failure(let e): logger.error("Command-Space refused: \(e.status, privacy: .public)")
         }
         snapper = Snapper(hotKeys: hotKeys)
     }
