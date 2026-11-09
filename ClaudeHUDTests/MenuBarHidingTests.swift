@@ -283,3 +283,63 @@ final class MenuBarHidingTests: XCTestCase {
         XCTAssertFalse(h.isOn)
     }
 }
+
+// MARK: - The Objective-C call itself
+
+/// Stand-ins for MBAssessmentModeConfiguration and MBAssessmentModeAssertion:
+/// the same selectors, and, like MenuBarClientCore, the assertion keeps the
+/// completion block and calls it after `activate` has returned. A block passed
+/// as non-escaping traps here, as it did at launch on 2026-11-08.
+final class StandInConfiguration: NSObject {
+    @objc(initWithAllowedSystemItems:allowedBundleIdentifiers:)
+    init(allowedSystemItems: NSArray, allowedBundleIdentifiers: NSArray) { super.init() }
+}
+
+final class StandInAssertion: NSObject {
+    static var refuse = false
+    private(set) static var invalidated = 0
+    private var kept: ((NSError?) -> Void)?
+
+    @objc(activateWithConfiguration:completionHandler:)
+    func activate(configuration: AnyObject, completionHandler: @escaping (NSError?) -> Void) {
+        kept = completionHandler
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) { [self] in
+            kept?(Self.refuse ? NSError(domain: "StandIn", code: 7) : nil)
+            kept = nil
+        }
+    }
+
+    @objc func invalidate() { Self.invalidated += 1 }
+}
+
+@MainActor
+final class AssessmentModeRestrictorTests: XCTestCase {
+    private func activate(refuse: Bool) -> Result<MenuBarRestriction, Error>? {
+        StandInAssertion.refuse = refuse
+        let restrictor = AssessmentModeRestrictor(configurationClass: StandInConfiguration.self,
+                                                  assertionClass: StandInAssertion.self)
+        XCTAssertTrue(restrictor.isAvailable)
+        var result: Result<MenuBarRestriction, Error>?
+        let answered = expectation(description: "answered")
+        restrictor.activate(allowedSystemItems: Array(0..<64), allowedBundleIdentifiers: ["com.claudehud.app"]) {
+            result = $0
+            answered.fulfill()
+        }
+        wait(for: [answered], timeout: 2)
+        return result
+    }
+
+    func testALaterAnswerFromTheFrameworkGrantsTheAllowList() throws {
+        let before = StandInAssertion.invalidated
+        let restriction = try XCTUnwrap(activate(refuse: false)).get()
+        XCTAssertEqual(StandInAssertion.invalidated, before)
+        restriction.invalidate()
+        XCTAssertEqual(StandInAssertion.invalidated, before + 1)
+    }
+
+    func testALaterRefusalIsReportedAndTheAssertionDropped() {
+        let before = StandInAssertion.invalidated
+        guard case .failure? = activate(refuse: true) else { return XCTFail("expected a refusal") }
+        XCTAssertEqual(StandInAssertion.invalidated, before + 1)
+    }
+}

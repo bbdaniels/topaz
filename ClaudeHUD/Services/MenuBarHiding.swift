@@ -262,7 +262,18 @@ final class AssessmentModeRestrictor: MenuBarRestricting {
         return (configuration, assertion)
     }()
 
-    var isAvailable: Bool { Self.classes != nil }
+    /// The framework's classes, or stand-ins with the same selectors (tests).
+    private let classes: (configuration: NSObject.Type, assertion: NSObject.Type)?
+
+    init() { classes = Self.classes }
+
+    /// For tests: drives `activate` through the same Objective-C calls,
+    /// against stand-in classes that answer as MenuBarClientCore does.
+    init(configurationClass: NSObject.Type, assertionClass: NSObject.Type) {
+        classes = (configurationClass, assertionClass)
+    }
+
+    var isAvailable: Bool { classes != nil }
 
     /// MenuBarAgent's pid, by process name (libproc, so no AppKit here).
     func enforcer() -> Int32? {
@@ -291,7 +302,7 @@ final class AssessmentModeRestrictor: MenuBarRestricting {
         func finish(_ r: Result<MenuBarRestriction, Error>) {
             DispatchQueue.main.async { completion(r) }
         }
-        guard let classes = Self.classes,
+        guard let classes,
               let allocated = (classes.configuration as AnyObject).perform(NSSelectorFromString("alloc"))?.takeUnretainedValue(),
               let configureIMP = classes.configuration.instanceMethod(for: Self.configure),
               let activateIMP = classes.assertion.instanceMethod(for: Self.activateSelector)
