@@ -1,6 +1,6 @@
 //! Topaz's helpers: the apps nested in `Topaz.app/Contents/Helpers` that
-//! Topaz launches and keeps alive, today ClaudeHUD (Ben, 2026-11-08: one app,
-//! one Dock icon). Each runs in its own process, so a crash or a rebuild of a
+//! Topaz launches and keeps alive: ClaudeHUD (Loupe) and Topaz Launcher (Ben,
+//! 2026-11-08: one app, one Dock icon). Each runs in its own process, so a crash or a rebuild of a
 //! helper never touches the terminal.
 //!
 //! `start` runs once, in the primary GUI process. One thread per helper
@@ -57,10 +57,16 @@ mod imp {
         bundle_id: &'static str,
     }
 
-    const HELPERS: &[Helper] = &[Helper {
-        name: "ClaudeHUD",
-        bundle_id: "com.claudehud.app",
-    }];
+    const HELPERS: &[Helper] = &[
+        Helper {
+            name: "ClaudeHUD",
+            bundle_id: "com.claudehud.app",
+        },
+        Helper {
+            name: "Topaz Launcher",
+            bundle_id: "com.bbdaniels.topaz.launcher",
+        },
+    ];
 
     static START: Once = Once::new();
     static STOPPING: AtomicBool = AtomicBool::new(false);
