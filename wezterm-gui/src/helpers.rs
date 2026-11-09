@@ -1,5 +1,5 @@
 //! Topaz's helpers: the apps nested in `Topaz.app/Contents/Helpers` that
-//! Topaz launches and keeps alive: ClaudeHUD (Loupe) and Topaz Launcher (Ben,
+//! Topaz launches and keeps alive: Loupe and Topaz Launcher (Ben,
 //! 2026-11-08: one app, one Dock icon). Each runs in its own process, so a crash or a rebuild of a
 //! helper never touches the terminal.
 //!
@@ -59,8 +59,8 @@ mod imp {
 
     const HELPERS: &[Helper] = &[
         Helper {
-            name: "ClaudeHUD",
-            bundle_id: "com.claudehud.app",
+            name: "Loupe",
+            bundle_id: "com.bbdaniels.topaz.loupe",
         },
         Helper {
             name: "Topaz Launcher",

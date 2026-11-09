@@ -780,7 +780,7 @@ fn run_terminal_gui(opts: StartCommand, default_domain_name: Option<String>) -> 
 
     let gui = crate::frontend::try_new()?;
     // Only the primary GUI process gets here: a second instance handed its
-    // work off above. Its helpers (ClaudeHUD) start once, before any window.
+    // work off above. Its helpers (Loupe, Topaz Launcher) start once, before any window.
     crate::helpers::start();
     // fn dictation hears fn in every app from here, when it is on.
     #[cfg(target_os = "macos")]

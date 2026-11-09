@@ -7,8 +7,8 @@
 # stays at ~/.config/wezterm, so upstream merges stay clean and `wezterm cli`
 # keeps working.
 #
-# Topaz.app holds its helpers (2026-11-08): ClaudeHUD (Loupe) and Topaz
-# Launcher, both from ~/Projects/ClaudeHUD, are built here and nested in
+# Topaz.app holds its helpers (2026-11-08): Loupe and Topaz Launcher, both
+# from the repository ~/Projects/ClaudeHUD, are built here and nested in
 # Contents/Helpers, and Topaz launches them and keeps them alive
 # (wezterm-gui/src/helpers.rs). This script is
 # the one way either is built and installed; it replaced
@@ -20,17 +20,19 @@
 #   ./topaz-build.sh --install     install the staged app: quit Topaz, replace
 #                                  /Applications/Topaz.app, install the config
 #                                  from ~/Projects/personal, reopen Topaz
-#   ./topaz-build.sh --helper hud  rebuild the helpers, replace ClaudeHUD inside
+#   ./topaz-build.sh --helper loupe
+#                                  rebuild the helpers, replace Loupe inside
 #                                  the installed Topaz.app, re-sign that, and
-#                                  end the running ClaudeHUD so Topaz relaunches
-#                                  the new one; Topaz keeps running
+#                                  end the running Loupe so Topaz relaunches
+#                                  the new one; Topaz keeps running (`hud`,
+#                                  its name before 2026-11-08, still works)
 #   ./topaz-build.sh --helper launcher
 #                                  the same for Topaz Launcher (once a full
 #                                  build has installed a Topaz that has it)
 #
 # Signing: every binary with the "ClaudeHUD Dev" certificate and the hardened
 # runtime, inside out and without --deep (which would stamp Topaz's
-# entitlements on a helper): ClaudeHUD with its own entitlements, Topaz
+# entitlements on a helper): Loupe with its own entitlements, Topaz
 # Launcher with none, then Topaz's other binaries, then the outer bundle
 # with Topaz's. A stable signature keeps each permission (Topaz's
 # microphone, each helper's Accessibility) across rebuilds; each helper
@@ -52,37 +54,37 @@ STAGE=target/topaz/Topaz.app
 APP=/Applications/Topaz.app
 CONFIG_INSTALLER=$HOME/Projects/personal/deploy/mac/wezterm/install-wezterm.sh
 IDENTITY="ClaudeHUD Dev"
-HUD_REPO=$HOME/Projects/ClaudeHUD
-HUD_BUILD=/tmp/claudehud-build
-HUD_BUILT=$HUD_BUILD/Build/Products/Release/ClaudeHUD.app
-HUD_IN=Contents/Helpers/ClaudeHUD.app
-LAUNCHER_BUILT="$HUD_BUILD/Build/Products/Release/Topaz Launcher.app"
+HELPERS_REPO=$HOME/Projects/ClaudeHUD
+HELPERS_BUILD=/tmp/topaz-helpers-build
+LOUPE_BUILT=$HELPERS_BUILD/Build/Products/Release/Loupe.app
+LOUPE_IN=Contents/Helpers/Loupe.app
+LAUNCHER_BUILT="$HELPERS_BUILD/Build/Products/Release/Topaz Launcher.app"
 LAUNCHER_IN="Contents/Helpers/Topaz Launcher.app"
 LOGS=$HOME/Library/Caches/topaz-build
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 mkdir -p $LOGS
 
-# Test, then build ClaudeHUD and Topaz Launcher (Release) into $HUD_BUILT
+# Test, then build Loupe and Topaz Launcher (Release) into $LOUPE_BUILT
 # and $LAUNCHER_BUILT.
-build_hud() {
-  ( cd $HUD_REPO
-    xcodebuild test -scheme ClaudeHUDTests -destination platform=macOS -jobs 2 \
-      > $LOGS/hud-test.log 2>&1 || true
-    /usr/bin/grep -E "Executed [0-9]+ tests" $LOGS/hud-test.log | tail -1
-    if ! /usr/bin/grep -q "\*\* TEST SUCCEEDED \*\*" $LOGS/hud-test.log; then
-      /usr/bin/grep -E "error:|failed" $LOGS/hud-test.log | tail -20
-      echo "ClaudeHUD's tests failed ($LOGS/hud-test.log); nothing built." >&2
+build_helpers() {
+  ( cd $HELPERS_REPO
+    xcodebuild test -scheme LoupeTests -destination platform=macOS -jobs 2 \
+      > $LOGS/helpers-test.log 2>&1 || true
+    /usr/bin/grep -E "Executed [0-9]+ tests" $LOGS/helpers-test.log | tail -1
+    if ! /usr/bin/grep -q "\*\* TEST SUCCEEDED \*\*" $LOGS/helpers-test.log; then
+      /usr/bin/grep -E "error:|failed" $LOGS/helpers-test.log | tail -20
+      echo "The helpers' tests failed ($LOGS/helpers-test.log); nothing built." >&2
       exit 1
     fi
-    nice -n 10 xcodebuild -scheme ClaudeHUD -configuration Release \
-      -derivedDataPath $HUD_BUILD -jobs 2 build > $LOGS/hud-build.log 2>&1 || true
-    if ! /usr/bin/grep -q "\*\* BUILD SUCCEEDED \*\*" $LOGS/hud-build.log; then
-      /usr/bin/grep -E " error:" $LOGS/hud-build.log | tail -20
-      echo "ClaudeHUD did not build ($LOGS/hud-build.log)." >&2
+    nice -n 10 xcodebuild -scheme Loupe -configuration Release \
+      -derivedDataPath $HELPERS_BUILD -jobs 2 build > $LOGS/loupe-build.log 2>&1 || true
+    if ! /usr/bin/grep -q "\*\* BUILD SUCCEEDED \*\*" $LOGS/loupe-build.log; then
+      /usr/bin/grep -E " error:" $LOGS/loupe-build.log | tail -20
+      echo "Loupe did not build ($LOGS/loupe-build.log)." >&2
       exit 1
     fi
     nice -n 10 xcodebuild -scheme TopazLauncher -configuration Release \
-      -derivedDataPath $HUD_BUILD -jobs 2 build > $LOGS/launcher-build.log 2>&1 || true
+      -derivedDataPath $HELPERS_BUILD -jobs 2 build > $LOGS/launcher-build.log 2>&1 || true
     if ! /usr/bin/grep -q "\*\* BUILD SUCCEEDED \*\*" $LOGS/launcher-build.log; then
       /usr/bin/grep -E " error:" $LOGS/launcher-build.log | tail -20
       echo "Topaz Launcher did not build ($LOGS/launcher-build.log)." >&2
@@ -90,19 +92,19 @@ build_hud() {
     fi )
 }
 
-# Copy the built ClaudeHUD into the app at $1 and sign it. It is signed in a
+# Copy the built Loupe into the app at $1 and sign it. It is signed in a
 # scratch folder under its own name (codesign seals a folder not named .app
 # as a plain directory), then moved in whole.
-nest_hud() {
-  local tmp=$(mktemp -d /tmp/topaz-hud.XXXXXX)
-  ditto $HUD_BUILT $tmp/ClaudeHUD.app
+nest_loupe() {
+  local tmp=$(mktemp -d /tmp/topaz-loupe.XXXXXX)
+  ditto $LOUPE_BUILT $tmp/Loupe.app
   codesign --force --options runtime --timestamp=none \
-    --entitlements $HUD_REPO/ClaudeHUD/Resources/ClaudeHUD.entitlements \
-    --sign $IDENTITY $tmp/ClaudeHUD.app
-  codesign --verify --strict $tmp/ClaudeHUD.app
+    --entitlements $HELPERS_REPO/Loupe/Resources/Loupe.entitlements \
+    --sign $IDENTITY $tmp/Loupe.app
+  codesign --verify --strict $tmp/Loupe.app
   mkdir -p $1/Contents/Helpers
-  rm -rf $1/$HUD_IN
-  mv $tmp/ClaudeHUD.app $1/$HUD_IN
+  rm -rf $1/$LOUPE_IN
+  mv $tmp/Loupe.app $1/$LOUPE_IN
   rmdir $tmp
 }
 # The same for Topaz Launcher, which has no entitlements.
@@ -134,16 +136,14 @@ designated() {
 }
 
 # Every signature valid, and each helper's designated requirement the one
-# its permission grants were made to. ClaudeHUD's: $2 if given, else that
-# of /Applications/ClaudeHUD.app while it exists, else that of the installed
-# Topaz's copy. Topaz Launcher's: $3 if given, else that of the installed
-# Topaz's copy, if it has one.
+# its permission grants were made to: $2 (Loupe) and $3 (Topaz Launcher)
+# if given, else that of the installed Topaz's copy, if it has one.
 verify() {
   codesign --verify --deep --strict $1
-  codesign --verify --deep --strict $1/$HUD_IN
+  codesign --verify --deep --strict $1/$LOUPE_IN
   codesign --verify --deep --strict $1/$LAUNCHER_IN
   echo "Topaz:          $(designated $1)"
-  echo "ClaudeHUD:      $(designated $1/$HUD_IN)"
+  echo "Loupe:          $(designated $1/$LOUPE_IN)"
   echo "Topaz Launcher: $(designated $1/$LAUNCHER_IN)"
   local launcher_want=${3:-}
   if [[ -z $launcher_want && $1 != $APP && -d $APP/$LAUNCHER_IN ]]; then
@@ -154,13 +154,11 @@ verify() {
     exit 1
   fi
   local want=${2:-}
-  if [[ -z $want && -d /Applications/ClaudeHUD.app ]]; then
-    want=$(designated /Applications/ClaudeHUD.app)
-  elif [[ -z $want && $1 != $APP && -d $APP/$HUD_IN ]]; then
-    want=$(designated $APP/$HUD_IN)
+  if [[ -z $want && $1 != $APP && -d $APP/$LOUPE_IN ]]; then
+    want=$(designated $APP/$LOUPE_IN)
   fi
-  if [[ -n $want && $want != "$(designated $1/$HUD_IN)" ]]; then
-    echo "ClaudeHUD's designated requirement is not $want: its grants would not carry over." >&2
+  if [[ -n $want && $want != "$(designated $1/$LOUPE_IN)" ]]; then
+    echo "Loupe's designated requirement is not $want: its grants would not carry over." >&2
     exit 1
   fi
 }
@@ -191,22 +189,22 @@ install_staged() {
   fi
 }
 
-# Replace helper $1 (hud or launcher) inside the installed Topaz.app and
-# have Topaz relaunch it.
+# Replace helper $1 (loupe, or hud, its old name; or launcher) inside the
+# installed Topaz.app and have Topaz relaunch it.
 install_helper() {
   local name inside
   case $1 in
-    hud) name=ClaudeHUD inside=$HUD_IN ;;
+    loupe|hud) name=Loupe inside=$LOUPE_IN ;;
     launcher) name="Topaz Launcher" inside=$LAUNCHER_IN ;;
   esac
   [[ -d $APP/$inside ]] || { echo "$APP has no $inside; build and install Topaz first." >&2; exit 1; }
   pgrep -qf $APP/Contents/MacOS/wezterm-gui || { echo "Topaz is not running, so nothing would relaunch $name." >&2; exit 1; }
-  local hud_want=$(designated $APP/$HUD_IN) launcher_want=
+  local loupe_want=$(designated $APP/$LOUPE_IN) launcher_want=
   [[ -d $APP/$LAUNCHER_IN ]] && launcher_want=$(designated $APP/$LAUNCHER_IN)
-  build_hud
-  if [[ $1 == hud ]]; then nest_hud $APP; else nest_launcher $APP; fi
+  build_helpers
+  if [[ $name == Loupe ]]; then nest_loupe $APP; else nest_launcher $APP; fi
   sign_topaz $APP
-  verify $APP "$hud_want" "$launcher_want"
+  verify $APP "$loupe_want" "$launcher_want"
   $LSREGISTER -f $APP/$inside
   local exe="$APP/$inside/Contents/MacOS/$name" old new
   old=$(pgrep -f $exe || true)
@@ -220,13 +218,13 @@ install_helper() {
     echo "Topaz has not relaunched $name after 20 s." >&2
     exit 1
   fi
-  echo "$name $(git -C $HUD_REPO rev-parse --short HEAD) is running inside $APP (pid $new)."
+  echo "$name $(git -C $HELPERS_REPO rev-parse --short HEAD) is running inside $APP (pid $new)."
 }
 
 case ${1:-} in
   --install) install_staged; exit 0 ;;
   --helper)
-    [[ ${2:-} == (hud|launcher) ]] || { echo "usage: $0 --helper hud|launcher" >&2; exit 2; }
+    [[ ${2:-} == (loupe|hud|launcher) ]] || { echo "usage: $0 --helper loupe|launcher" >&2; exit 2; }
     install_helper $2; exit 0 ;;
   --update)
     git fetch -q upstream main
@@ -235,7 +233,7 @@ case ${1:-} in
     rustup update stable ;;
 esac
 
-build_hud
+build_helpers
 
 BINS=(wezterm wezterm-mux-server wezterm-gui strip-ansi-escapes)
 PKGS=(); for b in $BINS; do PKGS+=(-p $b); done
@@ -248,7 +246,7 @@ $PB -c "Set :CFBundleName Topaz" -c "Set :CFBundleDisplayName Topaz" \
     -c "Set :CFBundleIdentifier com.bbdaniels.topaz" \
     -c "Set :NSMicrophoneUsageDescription Topaz listens while you hold fn to dictate, and programs running in Topaz may ask to use the microphone." \
     -c "Add :TopazCommit string $(git rev-parse --short HEAD)" \
-    -c "Add :ClaudeHUDCommit string $(git -C $HUD_REPO rev-parse --short HEAD)" \
+    -c "Add :HelpersCommit string $(git -C $HELPERS_REPO rev-parse --short HEAD)" \
     $STAGE/Contents/Info.plist
 rm -f $STAGE/*.dylib
 mkdir -p $STAGE/Contents/MacOS $STAGE/Contents/Resources
@@ -256,7 +254,7 @@ cp -R assets/shell-integration/* $STAGE/Contents/Resources
 cp -R assets/shell-completion $STAGE/Contents/Resources
 tic -xe wezterm -o $STAGE/Contents/Resources/terminfo termwiz/data/wezterm.terminfo
 for bin in $BINS; do cp target/release/$bin $STAGE/Contents/MacOS/$bin; done
-nest_hud $STAGE
+nest_loupe $STAGE
 nest_launcher $STAGE
 sign_topaz $STAGE
 verify $STAGE
