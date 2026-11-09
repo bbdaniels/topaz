@@ -249,7 +249,7 @@ final class AssessmentModeRestrictor: MenuBarRestricting {
     private static let invalidateSelector = NSSelectorFromString("invalidate")
 
     private typealias ConfigureIMP = @convention(c) (AnyObject, Selector, NSArray, NSArray) -> AnyObject?
-    private typealias ActivateIMP = @convention(c) (AnyObject, Selector, AnyObject, @convention(block) (NSError?) -> Void) -> Void
+    private typealias ActivateIMP = @convention(c) (AnyObject, Selector, AnyObject, @escaping @convention(block) (NSError?) -> Void) -> Void
 
     private static let classes: (configuration: NSObject.Type, assertion: NSObject.Type)? = {
         guard dlopen(frameworkPath, RTLD_NOW | RTLD_LOCAL) != nil,
