@@ -782,6 +782,9 @@ fn run_terminal_gui(opts: StartCommand, default_domain_name: Option<String>) -> 
     // Only the primary GUI process gets here: a second instance handed its
     // work off above. Its helpers (ClaudeHUD) start once, before any window.
     crate::helpers::start();
+    // fn dictation hears fn in every app from here, when it is on.
+    #[cfg(target_os = "macos")]
+    crate::dictation::everywhere::start_if_enabled();
     let activity = Activity::new();
 
     promise::spawn::spawn(async move {

@@ -81,7 +81,6 @@ impl MyWindow {
             WindowEvent::AppearanceChanged(_)
             | WindowEvent::AdviseDeadKeyStatus(_)
             | WindowEvent::AdviseModifiersLedStatus(_, _)
-            | WindowEvent::FunctionKey(_)
             | WindowEvent::Notification(_)
             | WindowEvent::FocusChanged(_)
             | WindowEvent::DraggedFile(_)

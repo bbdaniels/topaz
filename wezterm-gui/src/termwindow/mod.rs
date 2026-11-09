@@ -74,6 +74,8 @@ pub mod box_model;
 pub mod charselect;
 pub mod clipboard;
 mod dictation;
+#[cfg(target_os = "macos")]
+pub use dictation::{focused_pane, show_dictation_notice};
 pub mod image_preview;
 pub mod keyevent;
 pub mod modal;
@@ -416,10 +418,6 @@ pub struct TermWindow {
     window_background: Vec<LoadedBackgroundLayer>,
 
     current_modifier_and_leds: (Modifiers, KeyboardLedStatus),
-    /// The fn dictation: the session of the current hold of fn, or of the
-    /// last one while its final text is awaited
-    #[cfg(target_os = "macos")]
-    fn_dictation: crate::dictation::control::Dictation,
     current_mouse_buttons: Vec<MousePress>,
     current_mouse_capture: Option<MouseCapture>,
 
@@ -737,8 +735,6 @@ impl TermWindow {
             window_drag_position: None,
             current_mouse_event: None,
             current_modifier_and_leds: Default::default(),
-            #[cfg(target_os = "macos")]
-            fn_dictation: Default::default(),
             prev_cursor: PrevCursorPos::new(),
             last_scroll_info: RenderableDimensions::default(),
             tab_state: RefCell::new(HashMap::new()),
@@ -991,10 +987,6 @@ impl TermWindow {
                     }
                 }
                 self.apply_pending_scale_changes();
-                Ok(true)
-            }
-            WindowEvent::FunctionKey(down) => {
-                self.function_key_changed(down);
                 Ok(true)
             }
             WindowEvent::AdviseModifiersLedStatus(modifiers, leds) => {

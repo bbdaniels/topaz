@@ -1,10 +1,10 @@
-//! When a dictation runs and when it must stop typing: the window's side of
-//! fn dictation, without the microphone, socket or pane, so that it can be
-//! tested on its own.
+//! When a dictation runs and when it must stop typing, without the event
+//! tap, microphone, socket or sink, so that it can be tested on its own.
 //!
 //! A session lives from fn down until its thread ends, which is after fn up
 //! and the wait for the final text (about 125 ms, at most a few seconds).
-//! Any key pressed during that whole time, or losing focus, cancels it: from
+//! Any key or mouse button pressed during that whole time, in any app, or a
+//! Topaz window losing focus, cancels it: from
 //! that moment nothing more is typed, so the dictation never backspaces over
 //! or types after Ben's own input. A second fn press while a session is still
 //! alive starts nothing.
@@ -157,13 +157,18 @@ impl Drop for Session {
     }
 }
 
-/// The window's dictation: at most one session at a time.
+/// The dictation: at most one session at a time, in the whole process
+/// (everywhere.rs holds the one instance).
 #[derive(Default)]
 pub struct Dictation {
     session: Option<Session>,
 }
 
 impl Dictation {
+    pub const fn new() -> Self {
+        Self { session: None }
+    }
+
     /// fn went down. While a session is still alive, holding fn or waiting
     /// for its final text, no second one starts.
     pub fn fn_down(&mut self, start: impl FnOnce() -> Option<Session>) {
@@ -181,8 +186,9 @@ impl Dictation {
         }
     }
 
-    /// A key went down or the window lost focus: type nothing more, whether
-    /// fn is still held or the final text is still awaited.
+    /// A key or mouse button went down, or a Topaz window lost focus: type
+    /// nothing more, whether fn is still held or the final text is still
+    /// awaited.
     pub fn cancel(&mut self) {
         if let Some(session) = self.session.take() {
             session.cancel();

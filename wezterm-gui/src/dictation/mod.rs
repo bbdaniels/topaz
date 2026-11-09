@@ -1,8 +1,11 @@
-//! Hold fn to dictate (Topaz, macOS; config.fn_dictation). While fn is held
-//! the microphone streams to Anthropic's speech to text, the service behind
-//! Claude Code's /voice, and the words are typed into the pane that was
-//! active at fn down as they arrive. On release the stream closes at once and
-//! only the tail is outstanding (about 125 ms: speed probe, 2026-11-08).
+//! Hold fn to dictate (Topaz, macOS; config.fn_dictation), in any app. While
+//! fn is held the microphone streams to Anthropic's speech to text, the
+//! service behind Claude Code's /voice, and the words are typed as they
+//! arrive into what was frontmost at fn down: Topaz's active pane, through
+//! the mux, or another app, as keyboard events (everywhere.rs, keys.rs). Both
+//! sinks take the same edits: what was typed is turned into the running text
+//! by `edit_between`. On release the stream closes at once and only the tail
+//! is outstanding (about 125 ms: speed probe, 2026-11-08).
 //!
 //! The protocol is Claude Code's own (2.1.319): a WebSocket with the OAuth
 //! token of Claude Code's login; KeepAlive on open and every 8 s; binary
@@ -18,12 +21,15 @@
 //! on a 401 it is read once more, since Claude Code refreshes it.
 
 pub mod control;
+pub mod everywhere;
+pub mod keys;
 pub mod light;
 pub mod typing;
 
 use anyhow::{anyhow, Context};
 use control::{Command, Session, Shared, Timing};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use keys::{AppSink, Applied, Target};
 use mux::pane::PaneId;
 use mux::Mux;
 use std::io::ErrorKind;
@@ -76,26 +82,123 @@ const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 /// Used in the User-Agent only when Claude Code's versions folder is unreadable.
 const FALLBACK_CLAUDE_VERSION: &str = "2.1.319";
 
-/// Shows a brief notice in the pane that was active at fn down; called on
-/// the session's thread.
-pub type Notice = Box<dyn Fn(String) + Send>;
-
-/// Start a session for one hold of fn, pressed at `pressed`. `notice` is
-/// used when Claude Code's sign in is missing, expired or refused, which Ben
-/// must fix himself.
-pub fn start(pane_id: PaneId, keyterms: Vec<String>, notice: Notice, pressed: Instant) -> Session {
+/// Start a session for one hold of fn, pressed at `pressed`, typing into
+/// `target` (Target::Pane or Target::App; everywhere.rs decides). When
+/// Claude Code's sign in is missing, expired or refused, which Ben must fix
+/// himself, the sink shows a notice.
+pub fn start(target: Target, keyterms: Vec<String>, pressed: Instant) -> Session {
     Session::spawn(pressed, move |commands, shared| {
-        match run(pane_id, &keyterms, &commands, &shared) {
+        let Some(mut sink) = Sink::for_target(target) else {
+            shared
+                .timing
+                .log(format_args!("session end (no focused pane)"));
+            return;
+        };
+        match run(&mut sink, &keyterms, &commands, &shared) {
             Ok(end) => shared.timing.log(format_args!("session end ({end})")),
             Err(err) => {
                 shared.timing.log(format_args!("session end (error)"));
                 log::error!("fn dictation: {err:#}");
                 if let Some(refused) = sign_in_refused(&err) {
-                    notice(refused.to_string());
+                    sink.notice(refused.to_string());
                 }
             }
         }
     })
+}
+
+/// How long the session waits for the GUI thread to name the focused pane.
+const FOCUSED_PANE_WAIT: Duration = Duration::from_secs(1);
+
+/// Where a session's words go.
+enum Sink {
+    /// Topaz's active pane at fn down, typed into on the GUI thread; the
+    /// window shows notices.
+    Pane {
+        pane_id: PaneId,
+        window: ::window::Window,
+    },
+    /// The app frontmost at fn down, typed into with keyboard events from
+    /// the session's thread.
+    App(AppSink<everywhere::EventPoster>),
+}
+
+impl Sink {
+    fn for_target(target: Target) -> Option<Self> {
+        match target {
+            Target::Pane => crate::termwindow::focused_pane(FOCUSED_PANE_WAIT)
+                .map(|(pane_id, window)| Self::Pane { pane_id, window }),
+            Target::App(pid) => Some(Self::App(AppSink::new(pid, everywhere::EventPoster::new()))),
+            Target::SecureInput | Target::Nowhere => None,
+        }
+    }
+
+    /// A brief notice where Ben is looking.
+    fn notice(&self, message: String) {
+        match self {
+            Self::Pane { pane_id, window } => {
+                crate::termwindow::show_dictation_notice(window, *pane_id, message)
+            }
+            Self::App(_) => everywhere::notice(message),
+        }
+    }
+
+    /// Type the difference between what was typed and what is wanted,
+    /// unless the session was cancelled by then. Into the pane, the flag is
+    /// checked on the GUI thread, where keys are handled, so no edit lands
+    /// after the key that cancelled. Into another app it is checked just
+    /// before posting, with secure input and the frontmost app: Some(how the
+    /// session ends) when typing must stop.
+    fn type_into(
+        &mut self,
+        cancelled: &Arc<AtomicBool>,
+        typed: &mut String,
+        wanted: &str,
+        timing: &Timing,
+    ) -> Option<End> {
+        let edit = edit_between(typed, wanted);
+        if edit.is_empty() {
+            return None;
+        }
+        match self {
+            Self::Pane { pane_id, .. } => {
+                *typed = wanted.to_string();
+                type_into_pane(*pane_id, cancelled, edit, timing);
+                None
+            }
+            Self::App(app) => {
+                let started = Instant::now();
+                let applied = app.apply(edit.backspaces, &edit.text, || {
+                    cancelled.load(Ordering::SeqCst)
+                });
+                match applied {
+                    Applied::Typed => {
+                        *typed = wanted.to_string();
+                        if timing.first_typed() {
+                            timing.log(format_args!(
+                                "first text typed into the app ({} chars, {} backspaces; \
+                                 posting took {} us)",
+                                edit.text.chars().count(),
+                                edit.backspaces,
+                                started.elapsed().as_micros()
+                            ));
+                        }
+                        None
+                    }
+                    Applied::Cancelled => Some("cancelled"),
+                    Applied::SecureInput => {
+                        cancelled.store(true, Ordering::SeqCst);
+                        self.notice(everywhere::SECURE_INPUT_NOTICE.to_string());
+                        Some("secure input came on")
+                    }
+                    Applied::FocusMoved => {
+                        cancelled.store(true, Ordering::SeqCst);
+                        Some("another app came to the front")
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Claude Code's sign in is missing, expired or refused: retrying cannot help
@@ -136,7 +239,7 @@ fn audio_ms(samples: usize) -> usize {
 type End = &'static str;
 
 fn run(
-    pane_id: PaneId,
+    sink: &mut Sink,
     keyterms: &[String],
     commands: &Receiver<Command>,
     shared: &Shared,
@@ -294,10 +397,20 @@ fn run(
                                 audio_ms(sent_samples)
                             ));
                         }
-                        type_into(pane_id, &cancelled, &mut typed, &transcript.text(), timing);
+                        if let Some(end) =
+                            sink.type_into(&cancelled, &mut typed, &transcript.text(), timing)
+                        {
+                            socket.close(None).ok();
+                            return Ok(end);
+                        }
                     }
                     Heard::Endpoint => {
-                        type_into(pane_id, &cancelled, &mut typed, &transcript.text(), timing);
+                        if let Some(end) =
+                            sink.type_into(&cancelled, &mut typed, &transcript.text(), timing)
+                        {
+                            socket.close(None).ok();
+                            return Ok(end);
+                        }
                         if final_by.is_some() {
                             timing.log(format_args!(
                                 "TranscriptEndpoint after CloseStream received"
@@ -307,7 +420,7 @@ fn run(
                         }
                     }
                     Heard::Error => {
-                        type_into(pane_id, &cancelled, &mut typed, &transcript.text(), timing);
+                        sink.type_into(&cancelled, &mut typed, &transcript.text(), timing);
                         socket.close(None).ok();
                         return Err(anyhow!("the service reported {message}"));
                     }
@@ -329,7 +442,7 @@ fn run(
         }
     }
 
-    type_into(pane_id, &cancelled, &mut typed, &transcript.text(), timing);
+    let stopped = sink.type_into(&cancelled, &mut typed, &transcript.text(), timing);
     socket.close(None).ok();
     log::info!(
         "fn dictation timing: last TranscriptText was at +{} ms; {messages} messages \
@@ -339,7 +452,7 @@ fn run(
         audio_ms(sent_samples),
         typed.chars().count()
     );
-    Ok(end)
+    Ok(stopped.unwrap_or(end))
 }
 
 /// Tell Loupe the light's state (light.rs): a distributed notification,
@@ -385,22 +498,14 @@ fn send_audio(socket: &mut Socket, pcm: &mut Vec<i16>, all: bool) -> anyhow::Res
     Ok(whole)
 }
 
-/// Type the difference between what was typed and what is wanted into the
-/// pane, on the GUI thread, unless the session was cancelled by then: the
-/// flag is checked there, where keys are handled, so no edit lands after the
-/// key that cancelled.
-fn type_into(
+/// Type an edit into the pane on the GUI thread, unless the session was
+/// cancelled by then.
+fn type_into_pane(
     pane_id: PaneId,
     cancelled: &Arc<AtomicBool>,
-    typed: &mut String,
-    wanted: &str,
+    edit: typing::Edit,
     timing: &Timing,
 ) {
-    let edit = edit_between(typed, wanted);
-    if edit.is_empty() {
-        return;
-    }
-    *typed = wanted.to_string();
     let cancelled = Arc::clone(cancelled);
     let timing = timing.clone();
     let queued = Instant::now();
@@ -760,16 +865,25 @@ mod tests {
             8
         });
         assert_eq!(slow, None, "stops waiting after its time");
-        assert!(RUNNING.load(Ordering::SeqCst), "the slow one is left running");
+        assert!(
+            RUNNING.load(Ordering::SeqCst),
+            "the slow one is left running"
+        );
         let started = Instant::now();
         assert_eq!(single_flight(&RUNNING, Duration::from_secs(5), || 9), None);
-        assert!(started.elapsed() < Duration::from_secs(1), "a second read fails at once");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "a second read fails at once"
+        );
 
         release_tx.send(()).unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         while RUNNING.load(Ordering::SeqCst) && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(single_flight(&RUNNING, Duration::from_millis(500), || 10), Some(10));
+        assert_eq!(
+            single_flight(&RUNNING, Duration::from_millis(500), || 10),
+            Some(10)
+        );
     }
 }

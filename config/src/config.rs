@@ -511,12 +511,16 @@ pub struct Config {
     #[dynamic(default)]
     pub tab_close_button_at_title_start: bool,
 
-    /// macOS: hold fn (Globe) on its own to dictate into the active pane
-    /// with Anthropic's speech to text, the service of Claude Code's /voice,
+    /// macOS: hold fn (Globe) on its own to dictate, in any app, with
+    /// Anthropic's speech to text, the service of Claude Code's /voice,
     /// signed in with Claude Code's login. Words are typed as they are
-    /// recognized; another key from fn down until the last words are typed,
-    /// or switching apps, cancels, so fn shortcuts keep working and nothing
-    /// lands after your own typing.
+    /// recognized into the active pane when Topaz is frontmost, and as
+    /// keyboard events into the frontmost app otherwise (never while a
+    /// password field has the keyboard). Another key or a click from fn down
+    /// until the last words are typed, or switching apps, cancels, so fn
+    /// shortcuts keep working and nothing lands after your own typing. Needs
+    /// Input Monitoring (to hear fn everywhere) and, for other apps,
+    /// Accessibility (to type there).
     #[dynamic(default)]
     pub fn_dictation: bool,
 
