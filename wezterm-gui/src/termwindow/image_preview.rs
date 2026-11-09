@@ -16,11 +16,22 @@
 //! text of those rows changes (a redraw that rewrites them) or the mouse
 //! leaves the reference.
 //!
-//! A path is drawn only if it names an existing file and the pane runs on
-//! this machine (a local domain pane whose foreground process is not ssh or
-//! mosh); a file that does not decode, or a URL whose fetch fails, draws
+//! Where a path is looked up depends on what runs in the pane. In a local
+//! pane it names a file on this machine. In a pane whose foreground process
+//! is ssh (the tabs attached to the iMac's sessions) it names a file on the
+//! far host, which is read with a second ssh to the same destination and
+//! options; a relative path there is resolved against the working directory
+//! of the tmux session the pane attaches to, when it attaches to one.
+//! Panes running mosh or et, and multiplexer domains, resolve URLs only.
+//! A missing file, a file that does not decode, or a failed fetch draws
 //! nothing. Files are read, and URLs fetched, on a worker thread; the image
 //! is decoded and scaled down there too, so the GUI thread only uploads it.
+//!
+//! Every reference that would preview carries a mark, a faint dashed
+//! underline drawn over the text (never into the grid), and the pointer
+//! becomes a hand over it. A path on the far host is marked once its fetch
+//! has succeeded, so a remote path is fetched as soon as it is on screen
+//! and its preview is ready when the pointer arrives.
 
 use crate::quad::{QuadTrait, TripleLayerQuadAllocator, TripleLayerQuadAllocatorTrait};
 use crate::termwindow::render::paint::AllowImage;
@@ -30,14 +41,18 @@ use ::window::WindowOps;
 use anyhow::{anyhow, Context};
 use mux::domain::LocalDomain;
 use mux::pane::{CachePolicy, Pane, PaneId};
+use mux::tab::PositionedPane;
 use mux::Mux;
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime};
 use termwiz::image::{ImageData, ImageDataType};
+use termwiz::surface::SequenceNo;
 use wezterm_term::{Line, StableRowIndex};
 use window::color::LinearRgba;
 
@@ -50,13 +65,40 @@ const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 /// Longest side of the decoded preview; larger images are scaled down on
 /// the worker thread so the texture atlas holds a modest bitmap.
 const MAX_DECODED_SIDE: u32 = 2048;
-/// Number of decoded previews kept before the cache is emptied.
+/// Number of previews kept; the oldest is dropped to make room.
 const MAX_CACHED_IMAGES: usize = 48;
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 /// How many rows above and below the hovered row a wrapped reference may span.
 const WRAPPED_ROWS_EACH_WAY: usize = 3;
 /// Width in pixels of the frame drawn around the preview.
 const FRAME_PIXELS: f32 = 2.0;
+/// Longest a fetch over ssh may take, connection included.
+const REMOTE_TIMEOUT: Duration = Duration::from_secs(15);
+/// A remote image older than this is fetched again when the pointer comes
+/// back to it (there is no modification time to watch), the old picture
+/// shown meanwhile.
+const REMOTE_REFRESH: Duration = Duration::from_secs(10);
+/// A remote path whose fetch failed is tried again after this long, for a
+/// file that is written after its name is printed.
+const REMOTE_RETRY: Duration = Duration::from_secs(60);
+/// The marks of a pane are found again after this long even when its text
+/// has not changed, so a local file that appears or vanishes is noticed.
+const MARK_RECHECK: Duration = Duration::from_secs(2);
+/// Most rows joined into one logical line when looking for a reference
+/// that wraps.
+const MAX_JOINED_ROWS: usize = 2 * WRAPPED_ROWS_EACH_WAY + 1;
+/// Most fetches over ssh running at once; a path found while they run is
+/// tried again at the next look.
+const MAX_REMOTE_FETCHES: usize = 4;
+/// Options a fetch over ssh must not inherit: they take no value and
+/// request a terminal, background the connection, open a control master,
+/// run no command or a subsystem, or only print something.
+const SSH_DROPPED_FLAGS: &str = "fGMNnsTtVv";
+/// Options that take a value.
+const SSH_FLAGS_WITH_VALUE: &str = "BbcDEeFIiJLlmOoPpQRSWw";
+/// Options with a value that a fetch must not inherit: port forwards and
+/// control commands.
+const SSH_DROPPED_VALUE_FLAGS: &str = "DLORW";
 
 /// True if `s` ends in `.png`, `.jpg`, `.jpeg`, `.gif` or `.webp`, in any case.
 pub fn has_image_extension(s: &str) -> bool {
@@ -345,6 +387,13 @@ pub fn join_wrapped_rows(
     {
         last += 1;
     }
+    join_rows(rows, first, last)
+}
+
+/// Joins `rows[first..=last]` into one run of text, dropping the trailing
+/// spaces of each row but the last and the indentation of each row but
+/// the first.
+fn join_rows(rows: &[RowCells], first: usize, last: usize) -> (Vec<char>, Vec<(usize, usize)>) {
     let mut chars = vec![];
     let mut positions = vec![];
     for r in first..=last {
@@ -367,6 +416,93 @@ pub fn join_wrapped_rows(
         }
     }
     (chars, positions)
+}
+
+/// One row's share of a marked reference: columns `start_col..end_col` of
+/// `row` (an index into the rows given to `reference_marks`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MarkSpan {
+    pub row: usize,
+    pub start_col: usize,
+    pub end_col: usize,
+}
+
+fn push_spans(
+    spans: &mut Vec<MarkSpan>,
+    positions: &[(usize, usize)],
+    start: usize,
+    end: usize,
+) {
+    for &(row, col) in &positions[start..end] {
+        match spans.last_mut() {
+            Some(span) if span.row == row && span.end_col == col => span.end_col = col + 1,
+            _ => spans.push(MarkSpan {
+                row,
+                start_col: col,
+                end_col: col + 1,
+            }),
+        }
+    }
+}
+
+/// The spans to mark on screen. Each row is read alone first, as the hover
+/// does, so a path that starts a row is not glued to the word that ends
+/// the row above; then each run of full rows is read joined, keeping only
+/// the references that cross rows. `pick` says which spelling of a
+/// reference would preview, if any, by its index in `candidates`.
+pub fn reference_marks(
+    rows: &[RowCells],
+    width: usize,
+    mut pick: impl FnMut(&ImageReference) -> Option<usize>,
+) -> Vec<MarkSpan> {
+    let mut spans = vec![];
+    for r in 0..rows.len() {
+        let (chars, positions) = join_rows(rows, r, r);
+        let text: String = chars.iter().collect();
+        for reference in find_image_references(&text) {
+            if let Some(i) = pick(&reference) {
+                push_spans(&mut spans, &positions, reference.candidates[i].start, reference.end);
+            }
+        }
+    }
+    let mut first = 0;
+    while first < rows.len() {
+        let mut last = first;
+        while last + 1 < rows.len() && last - first + 1 < MAX_JOINED_ROWS && rows[last].is_full(width)
+        {
+            last += 1;
+        }
+        if last > first {
+            let (chars, positions) = join_rows(rows, first, last);
+            let text: String = chars.iter().collect();
+            for reference in find_image_references(&text) {
+                let crosses = |start: usize| positions[start].0 != positions[reference.end - 1].0;
+                if !reference.candidates.iter().any(|c| crosses(c.start)) {
+                    continue;
+                }
+                if let Some(i) = pick(&reference) {
+                    let start = reference.candidates[i].start;
+                    if crosses(start) {
+                        push_spans(&mut spans, &positions, start, reference.end);
+                    }
+                }
+            }
+        }
+        first = last + 1;
+    }
+    // A cell found twice (alone and joined) is drawn once, since the marks
+    // are translucent.
+    spans.sort_by_key(|span| (span.row, span.start_col));
+    let mut merged: Vec<MarkSpan> = vec![];
+    for span in spans {
+        match merged.last_mut() {
+            Some(last) if last.row == span.row && span.start_col <= last.end_col => {
+                last.end_col = last.end_col.max(span.end_col);
+            }
+            _ => merged.push(span),
+        }
+    }
+    merged
 }
 
 /// Resolves a path spelling to an existing image file: `~/` against the
@@ -393,10 +529,151 @@ pub fn resolve_local_path(
     }
 }
 
+/// Quotes `s` for a POSIX shell.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// From the argument vector of an interactive ssh, the command that reaches
+/// the same destination with the same options to run one command:
+/// options that ask for a terminal, forward ports, background the
+/// connection or control a master are dropped, and the fetch never asks a
+/// question, never forwards, and gives up quickly. Returns that command
+/// (without the remote command) and the remote command words of the
+/// original.
+pub fn ssh_fetch_command(argv: &[String]) -> Option<(Vec<String>, Vec<String>)> {
+    let program = argv.first()?.clone();
+    let mut kept = vec![];
+    let mut destination = None;
+    let mut i = 1;
+    while i < argv.len() {
+        let arg = &argv[i];
+        i += 1;
+        if arg == "--" {
+            destination = Some(argv.get(i)?.clone());
+            i += 1;
+            break;
+        }
+        if !(arg.starts_with('-') && arg.len() > 1) {
+            destination = Some(arg.clone());
+            break;
+        }
+        let flags: Vec<char> = arg[1..].chars().collect();
+        for (k, &flag) in flags.iter().enumerate() {
+            if SSH_FLAGS_WITH_VALUE.contains(flag) {
+                let value = if k + 1 < flags.len() {
+                    flags[k + 1..].iter().collect()
+                } else {
+                    let value = argv.get(i)?.clone();
+                    i += 1;
+                    value
+                };
+                if !SSH_DROPPED_VALUE_FLAGS.contains(flag) {
+                    kept.push(format!("-{flag}"));
+                    kept.push(value);
+                }
+                break;
+            }
+            if !SSH_DROPPED_FLAGS.contains(flag) {
+                kept.push(format!("-{flag}"));
+            }
+        }
+    }
+    let destination = destination?;
+    // ssh keeps the first value it is given for an option, so these come
+    // before the inherited ones.
+    let mut command = vec![program];
+    for option in [
+        "BatchMode=yes",
+        "ConnectTimeout=5",
+        "ClearAllForwardings=yes",
+        "RemoteCommand=none",
+    ] {
+        command.push("-o".to_string());
+        command.push(option.to_string());
+    }
+    command.extend(kept);
+    command.push("-T".to_string());
+    command.push(destination);
+    Some((command, argv[i..].to_vec()))
+}
+
+/// If the remote command attaches to a tmux session (`tmux -L pi-gate
+/// attach -t =name`), shell text that changes to the working directory of
+/// that session's active pane, failing when there is none.
+pub fn tmux_cd_command(remote: &[String]) -> Option<String> {
+    let joined = remote.join(" ");
+    let words: Vec<&str> = joined.split_whitespace().collect();
+    let (first, rest) = words.split_first()?;
+    if Path::new(first).file_name()?.to_str()? != "tmux" {
+        return None;
+    }
+    let mut server = vec![];
+    let mut i = 0;
+    while i < rest.len() && rest[i].starts_with('-') {
+        if matches!(rest[i], "-L" | "-S") {
+            server.push(rest[i].to_string());
+            server.push(sh_quote(rest.get(i + 1)?));
+            i += 1;
+        } else if matches!(rest[i], "-f" | "-T" | "-c") {
+            i += 1;
+        }
+        i += 1;
+    }
+    if !matches!(rest.get(i), Some(&"attach") | Some(&"attach-session") | Some(&"a") | Some(&"at")) {
+        return None;
+    }
+    let mut target = None;
+    let mut k = i + 1;
+    while k < rest.len() {
+        if rest[k] == "-t" {
+            target = rest.get(k + 1).map(|t| t.to_string());
+            k += 1;
+        } else if let Some(t) = rest[k].strip_prefix("-t") {
+            target = Some(t.to_string());
+        }
+        k += 1;
+    }
+    // attach names a session; display-message wants a pane, and reads a
+    // bare `=name` as a pane that does not exist. `name:` is the session's
+    // current window and its active pane.
+    let mut target = target?;
+    if !target.contains(':') {
+        target.push(':');
+    }
+    let mut tmux = vec!["tmux".to_string()];
+    tmux.extend(server);
+    Some(format!(
+        "d=$({} display-message -p -t {} '#{{pane_current_path}}' 2>/dev/null) && [ -n \"$d\" ] && cd -- \"$d\"",
+        tmux.join(" "),
+        sh_quote(&target)
+    ))
+}
+
+/// The remote shell command that writes the image a path names to its
+/// output, or fails: `~/` against the remote home, a relative path after
+/// `cd` (none: a relative path cannot be resolved).
+pub fn remote_read_command(path: &str, cd: Option<&str>) -> Option<String> {
+    if !has_image_extension(path) {
+        return None;
+    }
+    let read = |target: String| format!("f={target} && test -f \"$f\" && exec cat -- \"$f\"");
+    if let Some(rest) = path.strip_prefix("~/") {
+        Some(read(format!("\"$HOME\"/{}", sh_quote(rest))))
+    } else if path.starts_with('/') {
+        Some(read(sh_quote(path)))
+    } else {
+        Some(format!("{} && {}", cd?, read(sh_quote(path))))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ImageSource {
     File(PathBuf),
     Url(String),
+    /// A file on a host reached over ssh: the ssh command, and the remote
+    /// shell command that writes the file to its output.
+    Remote { ssh: Vec<String>, command: String },
 }
 
 /// The reference the mouse rests on.
@@ -425,12 +702,58 @@ struct LoadEntry {
     /// Modification time of the file when the load began, so an image
     /// that is rewritten in place (a figure being iterated on) reloads.
     modified: Option<SystemTime>,
+    /// When the latest load began.
+    started: Instant,
+    /// Which load the entry waits for; the result of an older one is
+    /// dropped.
+    generation: u64,
+}
+
+/// What a pane's paths name, read from what runs in it.
+enum PaneFiles {
+    Local {
+        cwd: Option<PathBuf>,
+        home: Option<PathBuf>,
+    },
+    Ssh {
+        ssh: Vec<String>,
+        cd: Option<String>,
+    },
+    Unreachable,
+}
+
+/// Whether a spelling would preview.
+enum Found {
+    Ready(ImageSource, Option<SystemTime>),
+    /// A remote file still being fetched.
+    Pending(ImageSource),
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MarkKey {
+    viewport_top: StableRowIndex,
+    rows: usize,
+    cols: usize,
+    seqno: SequenceNo,
+    loads_finished: u64,
+}
+
+struct PaneMarks {
+    key: MarkKey,
+    found_at: Instant,
+    /// Spans whose `row` counts from the top of the viewport.
+    spans: Vec<MarkSpan>,
 }
 
 #[derive(Default)]
 pub struct ImagePreview {
     hover: Option<ImageHover>,
     loads: HashMap<ImageSource, LoadEntry>,
+    next_generation: u64,
+    /// Counts finished loads, so the marks are found again when one ends.
+    loads_finished: u64,
+    marks: HashMap<PaneId, PaneMarks>,
 }
 
 /// Decodes an encoded image and scales it to fit `MAX_DECODED_SIDE`.
@@ -494,6 +817,53 @@ fn fetch_url(url: &str) -> anyhow::Result<Vec<u8>> {
     Ok(body.buf)
 }
 
+/// Runs `command` on the far host through `ssh` and returns its output,
+/// killing it if it runs past `REMOTE_TIMEOUT` or writes more than
+/// `MAX_SOURCE_BYTES`.
+fn fetch_remote(ssh: &[String], command: &str) -> anyhow::Result<Vec<u8>> {
+    let (program, args) = ssh.split_first().context("empty ssh command")?;
+    let mut child = Command::new(program)
+        .args(args)
+        .arg(command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .with_context(|| format!("run {program}"))?;
+    let mut stdout = child.stdout.take().context("ssh output")?;
+    let child = Arc::new(Mutex::new(child));
+    let done = Arc::new(AtomicBool::new(false));
+    {
+        let child = Arc::clone(&child);
+        let done = Arc::clone(&done);
+        std::thread::Builder::new()
+            .name("image-preview-ssh-timeout".to_string())
+            .spawn(move || {
+                let started = Instant::now();
+                while !done.load(Ordering::Acquire) {
+                    if started.elapsed() > REMOTE_TIMEOUT {
+                        let _ = child.lock().unwrap().kill();
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            })?;
+    }
+    let mut bytes = vec![];
+    let read = (&mut stdout)
+        .take(MAX_SOURCE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes);
+    if read.is_err() || bytes.len() > MAX_SOURCE_BYTES {
+        let _ = child.lock().unwrap().kill();
+    }
+    done.store(true, Ordering::Release);
+    let status = child.lock().unwrap().wait()?;
+    read.context("read ssh output")?;
+    anyhow::ensure!(bytes.len() <= MAX_SOURCE_BYTES, "image is too large to preview");
+    anyhow::ensure!(status.success(), "{program}: {status}");
+    Ok(bytes)
+}
+
 fn load_image(source: &ImageSource) -> anyhow::Result<(Arc<ImageData>, u32, u32)> {
     let bytes = match source {
         ImageSource::File(path) => {
@@ -506,29 +876,52 @@ fn load_image(source: &ImageSource) -> anyhow::Result<(Arc<ImageData>, u32, u32)
             std::fs::read(path)?
         }
         ImageSource::Url(url) => fetch_url(url)?,
+        ImageSource::Remote { ssh, command } => fetch_remote(ssh, command)?,
     };
     decode_for_preview(&bytes)
 }
 
-/// Whether the paths a pane prints name files on this machine: the pane
-/// belongs to the local domain and is not running ssh or mosh in front.
-fn pane_paths_are_local(pane: &Arc<dyn Pane>) -> bool {
+/// What the paths a pane prints name: files on this machine (a local
+/// domain pane running neither ssh, mosh nor et), files on the far host of
+/// the ssh running in it, or nothing reachable.
+fn pane_files(pane: &Arc<dyn Pane>) -> PaneFiles {
     let is_local_domain = Mux::get()
         .get_domain(pane.domain_id())
         .map(|domain| domain.downcast_ref::<LocalDomain>().is_some())
         .unwrap_or(false);
     if !is_local_domain {
-        return false;
+        return PaneFiles::Unreachable;
     }
-    match pane.get_foreground_process_name(CachePolicy::AllowStale) {
-        Some(name) => {
-            let base = Path::new(&name)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-            !matches!(base, "ssh" | "mosh" | "mosh-client" | "et")
+    if let Some(info) = pane.get_foreground_process_info(CachePolicy::AllowStale) {
+        let base = |p: &Path| p.file_name().and_then(|n| n.to_str()).map(str::to_string);
+        let name = base(&info.executable)
+            .or_else(|| info.argv.first().and_then(|a| base(Path::new(a))))
+            .unwrap_or_else(|| info.name.clone());
+        match name.as_str() {
+            "ssh" => {
+                let mut argv = info.argv.clone();
+                if let Some(program) = argv.first_mut() {
+                    if info.executable.is_file() {
+                        *program = info.executable.to_string_lossy().into_owned();
+                    }
+                }
+                return match ssh_fetch_command(&argv) {
+                    Some((ssh, remote)) => PaneFiles::Ssh {
+                        cd: tmux_cd_command(&remote),
+                        ssh,
+                    },
+                    None => PaneFiles::Unreachable,
+                };
+            }
+            "mosh" | "mosh-client" | "et" => return PaneFiles::Unreachable,
+            _ => {}
         }
-        None => true,
+    }
+    PaneFiles::Local {
+        cwd: pane
+            .get_current_working_dir(CachePolicy::AllowStale)
+            .and_then(|url| url.to_file_path().ok()),
+        home: dirs_next::home_dir(),
     }
 }
 
@@ -546,6 +939,13 @@ impl crate::TermWindow {
             None
         };
         if hover != self.image_preview.hover {
+            if let Some(ImageHover {
+                source: source @ ImageSource::Remote { .. },
+                ..
+            }) = &hover
+            {
+                self.refresh_remote_if_stale(source);
+            }
             self.image_preview.hover = hover;
             context.invalidate();
         }
@@ -555,6 +955,70 @@ impl crate::TermWindow {
     pub fn clear_image_preview_hover(&mut self, context: &dyn WindowOps) {
         if self.image_preview.hover.take().is_some() {
             context.invalidate();
+        }
+    }
+
+    /// Whether the pointer rests on a reference that previews, so it shows
+    /// as a hand.
+    pub fn image_preview_wants_pointer(&self) -> bool {
+        let hover = match &self.image_preview.hover {
+            Some(hover) => hover,
+            None => return false,
+        };
+        match self.image_preview.loads.get(&hover.source).map(|e| &e.state) {
+            Some(LoadState::Ready(..)) => true,
+            Some(LoadState::Loading) => !matches!(hover.source, ImageSource::Remote { .. }),
+            _ => false,
+        }
+    }
+
+    /// Whether a spelling of a path would preview in a pane whose paths
+    /// name `files`; starts the fetch of a remote file not yet tried.
+    fn resolve_path(&mut self, files: &PaneFiles, text: &str) -> Found {
+        match files {
+            PaneFiles::Local { cwd, home } => {
+                match resolve_local_path(text, cwd.as_deref(), home.as_deref()) {
+                    Some(path) => {
+                        let modified = file_modified(&path);
+                        Found::Ready(ImageSource::File(path), modified)
+                    }
+                    None => Found::Unavailable,
+                }
+            }
+            PaneFiles::Ssh { ssh, cd } => {
+                let command = match remote_read_command(text, cd.as_deref()) {
+                    Some(command) => command,
+                    None => return Found::Unavailable,
+                };
+                let source = ImageSource::Remote {
+                    ssh: ssh.clone(),
+                    command,
+                };
+                let retry = match self.image_preview.loads.get(&source) {
+                    None => true,
+                    Some(entry) => match entry.state {
+                        LoadState::Ready(..) => return Found::Ready(source, None),
+                        LoadState::Loading => return Found::Pending(source),
+                        LoadState::Failed => entry.started.elapsed() > REMOTE_RETRY,
+                    },
+                };
+                let in_flight = self
+                    .image_preview
+                    .loads
+                    .iter()
+                    .filter(|(source, entry)| {
+                        matches!(source, ImageSource::Remote { .. })
+                            && matches!(entry.state, LoadState::Loading)
+                    })
+                    .count();
+                if retry && in_flight < MAX_REMOTE_FETCHES {
+                    self.start_image_load(&source, None, false);
+                    Found::Pending(source)
+                } else {
+                    Found::Unavailable
+                }
+            }
+            PaneFiles::Unreachable => Found::Unavailable,
         }
     }
 
@@ -582,20 +1046,16 @@ impl crate::TermWindow {
         }
         let rows: Vec<RowCells> = lines.iter().map(RowCells::from_line).collect();
 
-        // Whether paths are local, the working directory and the home
-        // directory; looked up only once a path covers the pointer, since
-        // this runs on every mouse move.
-        let mut local_context: Option<(bool, Option<PathBuf>, Option<PathBuf>)> = None;
+        // What the pane's paths name; looked up only once a path covers
+        // the pointer, since this runs on every mouse move.
+        let mut files: Option<PaneFiles> = None;
+        // A remote spelling still being fetched, used if nothing previews
+        // now.
+        let mut pending: Option<ImageHover> = None;
 
         // The hovered row alone first, so a path that starts a row is not
         // glued to the word that ends the row above; then the joined rows.
-        let single: (Vec<char>, Vec<(usize, usize)>) = {
-            let row = &rows[hovered];
-            (
-                row.chars.clone(),
-                row.cols.iter().map(|&col| (hovered, col)).collect(),
-            )
-        };
+        let single = join_rows(&rows, hovered, hovered);
         let joined = join_wrapped_rows(&rows, hovered, dims.cols);
 
         for (chars, positions) in [single, joined] {
@@ -612,34 +1072,15 @@ impl crate::TermWindow {
                     if !(candidate.start <= hover_idx && hover_idx < reference.end) {
                         continue;
                     }
-                    let (source, modified) = if reference.is_url {
-                        (ImageSource::Url(candidate.text.clone()), None)
+                    let found = if reference.is_url {
+                        Found::Ready(ImageSource::Url(candidate.text.clone()), None)
                     } else {
-                        let (paths_are_local, cwd, home) = local_context.get_or_insert_with(|| {
-                            let local = pane_paths_are_local(&pane);
-                            let cwd = if local {
-                                pane.get_current_working_dir(CachePolicy::AllowStale)
-                                    .and_then(|url| url.to_file_path().ok())
-                            } else {
-                                None
-                            };
-                            (local, cwd, dirs_next::home_dir())
-                        });
-                        if !*paths_are_local {
-                            continue;
-                        }
-                        match resolve_local_path(&candidate.text, cwd.as_deref(), home.as_deref()) {
-                            Some(path) => {
-                                let modified = file_modified(&path);
-                                (ImageSource::File(path), modified)
-                            }
-                            None => continue,
-                        }
+                        let files = files.get_or_insert_with(|| pane_files(&pane));
+                        self.resolve_path(files, &candidate.text)
                     };
                     let (first_r, start_col) = positions[candidate.start];
                     let (last_r, _) = positions[reference.end - 1];
-                    self.ensure_image_loading(&source, modified);
-                    return Some(ImageHover {
+                    let make = |source: ImageSource| ImageHover {
                         pane_id: pane.pane_id(),
                         source,
                         first_row: first_fetched + first_r as StableRowIndex,
@@ -649,11 +1090,25 @@ impl crate::TermWindow {
                             .iter()
                             .map(|l| l.as_str().into_owned())
                             .collect(),
-                    });
+                    };
+                    match found {
+                        Found::Ready(source, modified) => {
+                            if !matches!(source, ImageSource::Remote { .. }) {
+                                self.ensure_image_loading(&source, modified);
+                            }
+                            return Some(make(source));
+                        }
+                        Found::Pending(source) => {
+                            if pending.is_none() {
+                                pending = Some(make(source));
+                            }
+                        }
+                        Found::Unavailable => {}
+                    }
                 }
             }
         }
-        None
+        pending
     }
 
     fn ensure_image_loading(&mut self, source: &ImageSource, modified: Option<SystemTime>) {
@@ -662,16 +1117,60 @@ impl crate::TermWindow {
                 return;
             }
         }
-        if self.image_preview.loads.len() >= MAX_CACHED_IMAGES {
-            self.image_preview.loads.clear();
-        }
-        self.image_preview.loads.insert(
-            source.clone(),
-            LoadEntry {
-                state: LoadState::Loading,
-                modified,
-            },
+        self.start_image_load(source, modified, false);
+    }
+
+    /// Fetches a remote image again if it was loaded long enough ago,
+    /// showing the old picture until the new one arrives.
+    fn refresh_remote_if_stale(&mut self, source: &ImageSource) {
+        let stale = matches!(
+            self.image_preview.loads.get(source),
+            Some(LoadEntry {
+                state: LoadState::Ready(..),
+                started,
+                ..
+            }) if started.elapsed() > REMOTE_REFRESH
         );
+        if stale {
+            self.start_image_load(source, None, true);
+        }
+    }
+
+    /// Starts loading `source` on a worker thread. With `keep_shown`, a
+    /// picture already loaded stays until the new one replaces it.
+    fn start_image_load(&mut self, source: &ImageSource, modified: Option<SystemTime>, keep_shown: bool) {
+        let preview = &mut self.image_preview;
+        let generation = preview.next_generation;
+        preview.next_generation += 1;
+        let now = Instant::now();
+        match preview.loads.get_mut(source) {
+            Some(entry) if keep_shown && matches!(entry.state, LoadState::Ready(..)) => {
+                entry.modified = modified;
+                entry.started = now;
+                entry.generation = generation;
+            }
+            _ => {
+                if !preview.loads.contains_key(source) && preview.loads.len() >= MAX_CACHED_IMAGES {
+                    let oldest = preview
+                        .loads
+                        .iter()
+                        .min_by_key(|(_, entry)| entry.started)
+                        .map(|(source, _)| source.clone());
+                    if let Some(oldest) = oldest {
+                        preview.loads.remove(&oldest);
+                    }
+                }
+                preview.loads.insert(
+                    source.clone(),
+                    LoadEntry {
+                        state: LoadState::Loading,
+                        modified,
+                        started: now,
+                        generation,
+                    },
+                );
+            }
+        }
         let window = match self.window.clone() {
             Some(window) => window,
             None => return,
@@ -686,11 +1185,12 @@ impl crate::TermWindow {
                 }
                 window.notify(TermWindowNotif::Apply(Box::new(move |tw| {
                     if let Some(entry) = tw.image_preview.loads.get_mut(&source) {
-                        if entry.modified == modified {
+                        if entry.generation == generation {
                             entry.state = match result {
                                 Ok((data, width, height)) => LoadState::Ready(data, width, height),
                                 Err(_) => LoadState::Failed,
                             };
+                            tw.image_preview.loads_finished += 1;
                         }
                     }
                     if let Some(window) = tw.window.as_ref() {
@@ -701,6 +1201,131 @@ impl crate::TermWindow {
         if let Err(err) = spawned {
             log::error!("image preview: cannot start a loader thread: {err:#}");
         }
+    }
+
+    /// The pixel rectangle of a pane: left, top, right, bottom.
+    fn image_preview_pane_rect(&self, pos: &PositionedPane) -> anyhow::Result<(f32, f32, f32, f32)> {
+        let cell_width = self.render_metrics.cell_size.width as f32;
+        let cell_height = self.render_metrics.cell_size.height as f32;
+        let (padding_left, padding_top) = self.padding_left_top();
+        let top_bar_height = if self.show_tab_bar && !self.config.tab_bar_at_bottom {
+            self.tab_bar_pixel_height()?
+        } else {
+            0.
+        };
+        let border = self.get_os_border();
+        let left = padding_left + border.left.get() as f32 + pos.left as f32 * cell_width;
+        let top =
+            top_bar_height + padding_top + border.top.get() as f32 + pos.top as f32 * cell_height;
+        Ok((
+            left,
+            top,
+            left + pos.width as f32 * cell_width,
+            top + pos.height as f32 * cell_height,
+        ))
+    }
+
+    /// The marks of the references on screen in one pane.
+    fn find_image_marks(
+        &mut self,
+        pane: &Arc<dyn Pane>,
+        viewport_top: StableRowIndex,
+        rows: usize,
+        cols: usize,
+    ) -> Vec<MarkSpan> {
+        let (first, lines) = pane.get_lines(viewport_top..viewport_top + rows as StableRowIndex);
+        let offset = first - viewport_top;
+        let rows: Vec<RowCells> = lines.iter().map(RowCells::from_line).collect();
+        let mut files: Option<PaneFiles> = None;
+        let mut spans = reference_marks(&rows, cols, |reference| {
+            if reference.is_url {
+                return Some(0);
+            }
+            let files = files.get_or_insert_with(|| pane_files(pane));
+            let mut picked = None;
+            for (i, candidate) in reference.candidates.iter().enumerate() {
+                if let Found::Ready(..) = self.resolve_path(files, &candidate.text) {
+                    picked = Some(i);
+                    break;
+                }
+            }
+            picked
+        });
+        for span in &mut spans {
+            span.row = (span.row as StableRowIndex + offset) as usize;
+        }
+        spans
+    }
+
+    /// Underlines, with a faint dash in each cell, every reference on
+    /// screen that previews. Drawn over the panes, never into their grids.
+    pub fn paint_image_marks(&mut self, layers: &mut TripleLayerQuadAllocator) -> anyhow::Result<()> {
+        if !self.config.image_preview_on_hover || !self.config.image_preview_underline {
+            self.image_preview.marks.clear();
+            return Ok(());
+        }
+        let panes = self.get_panes_to_render();
+        self.image_preview
+            .marks
+            .retain(|id, _| panes.iter().any(|pos| pos.pane.pane_id() == *id));
+        let cell_width = self.render_metrics.cell_size.width as f32;
+        let cell_height = self.render_metrics.cell_size.height as f32;
+        let underline_top = self.render_metrics.descender_row as f32;
+        let underline_height = self.render_metrics.underline_height.max(1) as f32;
+        for pos in &panes {
+            let pane_id = pos.pane.pane_id();
+            let dims = pos.pane.get_dimensions();
+            let viewport_top = self.get_viewport(pane_id).unwrap_or(dims.physical_top);
+            let key = MarkKey {
+                viewport_top,
+                rows: dims.viewport_rows,
+                cols: dims.cols,
+                seqno: pos.pane.get_current_seqno(),
+                loads_finished: self.image_preview.loads_finished,
+            };
+            let fresh = matches!(
+                self.image_preview.marks.get(&pane_id),
+                Some(marks) if marks.key == key && marks.found_at.elapsed() < MARK_RECHECK
+            );
+            if !fresh {
+                let spans = self.find_image_marks(&pos.pane, viewport_top, dims.viewport_rows, dims.cols);
+                // A fetch that finished while looking changes nothing found.
+                let key = MarkKey {
+                    loads_finished: self.image_preview.loads_finished,
+                    ..key
+                };
+                self.image_preview.marks.insert(
+                    pane_id,
+                    PaneMarks {
+                        key,
+                        found_at: Instant::now(),
+                        spans,
+                    },
+                );
+            }
+            let spans = match self.image_preview.marks.get(&pane_id) {
+                Some(marks) if !marks.spans.is_empty() => marks.spans.clone(),
+                _ => continue,
+            };
+            let (pane_left, pane_top, _, _) = self.image_preview_pane_rect(pos)?;
+            let color = pos.pane.palette().foreground.to_linear().mul_alpha(0.45);
+            for span in spans {
+                if span.row >= pos.height {
+                    continue;
+                }
+                let y = pane_top + span.row as f32 * cell_height + underline_top;
+                for col in span.start_col..span.end_col.min(pos.width) {
+                    let x = pane_left + col as f32 * cell_width + cell_width * 0.2;
+                    self.filled_rectangle(
+                        layers,
+                        2,
+                        euclid::rect(x, y, cell_width * 0.6, underline_height),
+                        color,
+                    )?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Draws the preview for the hovered reference, on top of the panes.
@@ -755,18 +1380,7 @@ impl crate::TermWindow {
 
         let cell_width = self.render_metrics.cell_size.width as f32;
         let cell_height = self.render_metrics.cell_size.height as f32;
-        let (padding_left, padding_top) = self.padding_left_top();
-        let top_bar_height = if self.show_tab_bar && !self.config.tab_bar_at_bottom {
-            self.tab_bar_pixel_height()?
-        } else {
-            0.
-        };
-        let border = self.get_os_border();
-        let pane_left = padding_left + border.left.get() as f32 + pos.left as f32 * cell_width;
-        let pane_top =
-            top_bar_height + padding_top + border.top.get() as f32 + pos.top as f32 * cell_height;
-        let pane_right = pane_left + pos.width as f32 * cell_width;
-        let pane_bottom = pane_top + pos.height as f32 * cell_height;
+        let (pane_left, pane_top, pane_right, pane_bottom) = self.image_preview_pane_rect(&pos)?;
 
         let max_height = (self.config.image_preview_max_rows as f32 * cell_height)
             .min(pos.height as f32 * cell_height - 2. * FRAME_PIXELS);
@@ -1020,6 +1634,133 @@ mod test {
         );
         assert_eq!(resolve_local_path("out", Some(dir.path()), None), None);
         assert_eq!(resolve_local_path("relative.png", None, None), None);
+    }
+
+    fn strings(words: &[&str]) -> Vec<String> {
+        words.iter().map(|w| w.to_string()).collect()
+    }
+
+    #[test]
+    fn ssh_fetch_keeps_destination_and_options() {
+        let argv = strings(&[
+            "/usr/bin/ssh",
+            "-t",
+            "-p",
+            "2222",
+            "-L8080:localhost:80",
+            "-i",
+            "/k/id",
+            "imac",
+            "tmux -L pi-gate attach -t =rc-x",
+        ]);
+        let (ssh, remote) = ssh_fetch_command(&argv).unwrap();
+        assert_eq!(
+            ssh,
+            strings(&[
+                "/usr/bin/ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                "-o",
+                "ClearAllForwardings=yes",
+                "-o",
+                "RemoteCommand=none",
+                "-p",
+                "2222",
+                "-i",
+                "/k/id",
+                "-T",
+                "imac",
+            ])
+        );
+        assert_eq!(remote, strings(&["tmux -L pi-gate attach -t =rc-x"]));
+        let (ssh, remote) = ssh_fetch_command(&strings(&["ssh", "-tA", "host"])).unwrap();
+        assert_eq!(ssh.last().unwrap(), "host");
+        assert!(ssh.contains(&"-A".to_string()));
+        assert!(!ssh.contains(&"-t".to_string()));
+        assert!(remote.is_empty());
+        assert_eq!(ssh_fetch_command(&strings(&["ssh", "-p"])), None);
+        assert_eq!(ssh_fetch_command(&strings(&["ssh", "-V"])), None);
+    }
+
+    #[test]
+    fn tmux_cd_finds_the_attached_session() {
+        assert_eq!(
+            tmux_cd_command(&strings(&["tmux -L pi-gate attach -t =rc-x"])).unwrap(),
+            "d=$(tmux -L 'pi-gate' display-message -p -t '=rc-x:' '#{pane_current_path}' 2>/dev/null) && [ -n \"$d\" ] && cd -- \"$d\""
+        );
+        assert!(tmux_cd_command(&strings(&["/usr/bin/tmux", "a", "-tmain"]))
+            .unwrap()
+            .contains("-t 'main:'"));
+        assert_eq!(tmux_cd_command(&strings(&["tmux", "new", "-s", "x"])), None);
+        assert_eq!(tmux_cd_command(&strings(&["htop"])), None);
+        assert_eq!(tmux_cd_command(&[]), None);
+    }
+
+    #[test]
+    fn remote_read_quotes_the_path() {
+        assert_eq!(
+            remote_read_command("/tmp/it's.png", None).unwrap(),
+            "f='/tmp/it'\\''s.png' && test -f \"$f\" && exec cat -- \"$f\""
+        );
+        assert_eq!(
+            remote_read_command("~/a b.png", None).unwrap(),
+            "f=\"$HOME\"/'a b.png' && test -f \"$f\" && exec cat -- \"$f\""
+        );
+        assert_eq!(remote_read_command("out/x.png", None), None);
+        assert_eq!(
+            remote_read_command("out/x.png", Some("cd /w")).unwrap(),
+            "cd /w && f='out/x.png' && test -f \"$f\" && exec cat -- \"$f\""
+        );
+        assert_eq!(remote_read_command("/tmp/x.txt", None), None);
+    }
+
+    #[test]
+    fn remote_read_runs_in_a_shell() {
+        let dir = tempfile::tempdir().unwrap();
+        let name = "it's here.png";
+        std::fs::write(dir.path().join(name), b"bytes").unwrap();
+        let path = dir.path().join(name).to_string_lossy().into_owned();
+        let run = |command: String| {
+            std::process::Command::new("sh")
+                .arg("-c")
+                .arg(command)
+                .output()
+                .unwrap()
+        };
+        let out = run(remote_read_command(&path, None).unwrap());
+        assert!(out.status.success());
+        assert_eq!(out.stdout, b"bytes");
+        let cd = format!("cd -- {}", sh_quote(&dir.path().to_string_lossy()));
+        let out = run(remote_read_command(name, Some(&cd)).unwrap());
+        assert_eq!(out.stdout, b"bytes");
+        let out = run(remote_read_command("/nonexistent/x.png", None).unwrap());
+        assert!(!out.status.success());
+    }
+
+    #[test]
+    fn marks_cover_each_reference_once() {
+        let width = 20;
+        let rows: Vec<RowCells> = [
+            "see /tmp/a.png ok   ",
+            "xx /tmp/long/path/to",
+            "/b.png and c.txt",
+        ]
+        .iter()
+        .map(|r| RowCells::from_str(r))
+        .collect();
+        let spans = reference_marks(&rows, width, |_| Some(0));
+        assert_eq!(
+            spans,
+            vec![
+                MarkSpan { row: 0, start_col: 4, end_col: 14 },
+                MarkSpan { row: 1, start_col: 3, end_col: 20 },
+                // Found alone and as the end of the joined path; drawn once.
+                MarkSpan { row: 2, start_col: 0, end_col: 6 },
+            ]
+        );
+        assert!(reference_marks(&rows, width, |_| None).is_empty());
     }
 
     #[test]

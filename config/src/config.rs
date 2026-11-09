@@ -533,10 +533,15 @@ pub struct Config {
     /// image URL in a pane (png, jpg, jpeg, gif or webp), draw the image
     /// beside that line. The preview is drawn over the pane by the GUI and
     /// never written into the terminal, so full-screen programs such as
-    /// Claude Code are not disturbed. Paths are shown only for panes on
-    /// this machine.
+    /// Claude Code are not disturbed. A path is read on this machine, or,
+    /// in a pane running ssh, on the far host over a second ssh.
     #[dynamic(default = "default_true")]
     pub image_preview_on_hover: bool,
+
+    /// Topaz: mark every image reference that previews on hover with a
+    /// faint dashed underline, drawn over the text.
+    #[dynamic(default = "default_true")]
+    pub image_preview_underline: bool,
 
     /// Topaz: the tallest the hover image preview is drawn, in terminal rows.
     #[dynamic(default = "default_image_preview_max_rows")]

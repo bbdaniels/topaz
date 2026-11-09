@@ -842,7 +842,9 @@ impl super::TermWindow {
             || event.coords.y < 0
             || event.coords.y as usize > self.dimensions.pixel_height;
 
-        context.set_cursor(Some(if self.current_highlight.is_some() {
+        context.set_cursor(Some(if self.current_highlight.is_some()
+            || self.image_preview_wants_pointer()
+        {
             // When hovering over a hyperlink, show an appropriate
             // mouse cursor to give the cue that it is clickable
             CursorIcon::Pointer
