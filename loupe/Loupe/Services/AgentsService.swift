@@ -533,8 +533,9 @@ final class AgentsService: ObservableObject {
 
     /// Stop a live session through the gate's `end <session id>` on its
     /// machine: `~/bin/pi-gate` here, or over ssh on the iMac. The gate closes
-    /// the session's tmux pane, or sends SIGTERM when it has none, and waits
-    /// until it has stopped (deploy/mac/pi-gate.py in bbdaniels/personal).
+    /// the session's tmux pane, stops a background session with `claude
+    /// stop`, or sends SIGTERM when it has neither, and waits until it has
+    /// stopped (deploy/mac/pi-gate.py in bbdaniels/personal).
     /// Nil when it stopped, else the gate's reason. Blocks up to about ten
     /// seconds: call it off the main thread.
     nonisolated static func end(sessionId: String, onIMac: Bool) -> String? {
@@ -555,6 +556,19 @@ final class AgentsService: ObservableObject {
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return IMacLauncher.endFailure(status: process.terminationStatus, stdout: data)
+    }
+
+    /// How long a session may stay listed after the gate's `end` said it had
+    /// stopped. 2026-11-08: a daemon background session ended with SIGTERM was
+    /// started again within about 10 s, and its row stayed struck through.
+    nonisolated static let stopDeadline: TimeInterval = 15
+
+    /// Why a stop failed, or nil when it worked: the gate's refusal, or a
+    /// session still listed `stopDeadline` after the gate said it stopped.
+    nonisolated static func stopFailure(refused: String?, stillListed: Bool) -> String? {
+        if let refused { return refused }
+        guard stillListed else { return nil }
+        return "the gate said it stopped, but it was still running \(Int(stopDeadline)) seconds later"
     }
 
     /// THE way the HUD puts Ben in a live session (Ben, 2026-11-03, never

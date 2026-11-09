@@ -732,12 +732,15 @@ extension LiveSessionLine {
 /// 2026-11-03; the × moved from the far right onto the dot, 2026-11-08). Closing its terminal tab only detaches, and the dot
 /// turns grey (`SessionLight.noTab`). Once the × is pressed the name is
 /// struck through until the session is gone (Ben, 2026-11-08: "when
-/// something is truly being closed out, strikethrough text").
+/// something is truly being closed out, strikethrough text"), or until
+/// `AgentsService.stopDeadline` passes with it still listed, when the
+/// strikethrough clears and an alert says it did not stop.
 struct SessionLineView: View {
     let line: LiveSessionLine
     let inset: CGFloat
     let onOpen: () -> Void
     @Environment(\.fontScale) private var scale
+    @EnvironmentObject private var agentsService: AgentsService
     @State private var hovering = false
     @State private var dotHovering = false
     @State private var stopping = false
@@ -790,14 +793,21 @@ struct SessionLineView: View {
         .onHover { hovering = $0 }
     }
 
+    /// The × never fails silently (Ben, 2026-11-08): the gate's refusal, or a
+    /// session still listed `AgentsService.stopDeadline` after the gate said
+    /// it had stopped, clears the strikethrough and says why.
     private func stop() {
         guard let sid = line.sessionId else { return }
         stopping = true
-        let onIMac = line.isIMac, name = line.name
+        let onIMac = line.isIMac, name = line.name, agents = agentsService
         Task.detached(priority: .userInitiated) {
-            let failure = AgentsService.end(sessionId: sid, onIMac: onIMac)
+            let refused = AgentsService.end(sessionId: sid, onIMac: onIMac)
+            if refused == nil {
+                try? await Task.sleep(nanoseconds: UInt64(AgentsService.stopDeadline * 1_000_000_000))
+            }
             await MainActor.run {
-                guard let failure else { return }
+                let listed = agents.agents.contains { $0.sessionId == sid }
+                guard let failure = AgentsService.stopFailure(refused: refused, stillListed: listed) else { return }
                 stopping = false
                 let alert = NSAlert()
                 alert.alertStyle = .warning

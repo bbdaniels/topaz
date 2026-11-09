@@ -262,6 +262,16 @@ final class SessionLightTests: XCTestCase {
                        "no running session with that id")
         XCTAssertEqual(IMacLauncher.endFailure(status: 255, stdout: Data()), "the iMac did not answer")
     }
+
+    /// 2026-11-08: the gate said a background session had stopped, its daemon
+    /// started it again, and the row stayed struck through with no word.
+    func testAStopFailsOnTheGatesRefusalOrASessionStillListedAfterTheDeadline() {
+        XCTAssertNil(AgentsService.stopFailure(refused: nil, stillListed: false))
+        XCTAssertEqual(AgentsService.stopFailure(refused: "the session did not stop", stillListed: true),
+                       "the session did not stop")
+        XCTAssertEqual(AgentsService.stopFailure(refused: nil, stillListed: true),
+                       "the gate said it stopped, but it was still running 15 seconds later")
+    }
 }
 
 /// What rescans the Projects list, and the daily note built from the scan.
