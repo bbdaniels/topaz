@@ -759,6 +759,8 @@ pub struct ImagePreview {
     /// Counts finished loads, so the marks are found again when one ends.
     loads_finished: u64,
     marks: HashMap<PaneId, PaneMarks>,
+    /// The reference a plain left press landed on; its release opens it.
+    pressed: Option<ImageHover>,
 }
 
 /// Decodes an encoded image and scales it to fit `MAX_DECODED_SIDE`.
@@ -1047,6 +1049,33 @@ impl crate::TermWindow {
         match self.image_preview.loads.get(&hover.source).map(|e| &e.state) {
             Some(LoadState::Ready(..)) => true,
             Some(LoadState::Loading) => !matches!(hover.source, ImageSource::Remote { .. }),
+            _ => false,
+        }
+    }
+
+    /// Takes a plain left click on a reference that previews: the press is
+    /// held back from the pane, and the release opens the image if the
+    /// pointer is still on that reference. Returns true for an event it
+    /// took, which the pane must not see.
+    pub fn image_preview_click(&mut self, event: &::window::MouseEvent) -> bool {
+        use ::window::{MouseEventKind, MousePress};
+        let plain = event.modifiers.remove_positional_mods() == ::window::Modifiers::NONE;
+        match event.kind {
+            MouseEventKind::Press(MousePress::Left) if plain && self.image_preview_wants_pointer() => {
+                self.image_preview.pressed = self.image_preview.hover.clone();
+                true
+            }
+            MouseEventKind::Release(MousePress::Left) => match self.image_preview.pressed.take() {
+                Some(pressed) => {
+                    if self.image_preview.hover.as_ref() == Some(&pressed) {
+                        open_image_source(pressed.source);
+                    }
+                    true
+                }
+                None => false,
+            },
+            // A drag that began on a reference stays with it.
+            MouseEventKind::Move => self.image_preview.pressed.is_some(),
             _ => false,
         }
     }

@@ -854,6 +854,13 @@ impl super::TermWindow {
             CursorIcon::Text
         }));
 
+        // Topaz: a plain left click on an image reference that previews
+        // opens it, even when the program in the pane (tmux with its mouse
+        // mode on) takes the mouse.
+        if allow_action && self.current_highlight.is_none() && self.image_preview_click(&event) {
+            return;
+        }
+
         let event_trigger_type = match &event.kind {
             WMEK::Press(press) => {
                 let press = mouse_press_to_tmb(press);
