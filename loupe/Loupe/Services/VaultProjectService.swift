@@ -29,6 +29,16 @@ final class VaultProjectService: ObservableObject {
 
     @Published private(set) var projects: [Project] = []
 
+    /// Bumped whenever a published scan changes `VaultProject.filingClaims`.
+    /// The cwd and session filing caches were resolved against the old
+    /// claims and are emptied with it, and the views that prime them key
+    /// their `.task` on it, so every live and History session is refiled
+    /// at once. Before 2026-11-08 the caches lived until Loupe restarted: a
+    /// cwd cached as unclaimed stayed under General after a new project
+    /// claimed it, and a session filed under a folder that moved vanished.
+    @Published private(set) var filingGeneration = 0
+    private var filedAgainst: [String: ProjectResolver.Claims]?
+
     // MARK: - Configuration
 
     private(set) var vaultPath: URL?
@@ -147,12 +157,26 @@ final class VaultProjectService: ObservableObject {
                 VaultProject.scan(vaultPath: vault)
             }.value
             guard let self, generation == self.scanGeneration else { return }
-            self.projects = out
+            self.publish(out)
             self.scanTask = nil
             logger.info("vault projects refreshed: \(out.count) total, \(out.filter { $0.isActive }.count) active")
         }
         scanTask = task
         return task
+    }
+
+    /// The one write of `projects`. A change of claims empties both filing
+    /// caches and bumps `filingGeneration`, which re-primes them.
+    private func publish(_ out: [Project]) {
+        projects = out
+        let claims = VaultProject.filingClaims(out)
+        guard claims != filedAgainst else { return }
+        if filedAgainst != nil {
+            cwdFolderCache = [:]
+            sessionFolderCache = [:]
+        }
+        filedAgainst = claims
+        filingGeneration &+= 1
     }
 
     /// Insert (or replace) one project parsed from `folder`, re-sorted into
@@ -165,7 +189,7 @@ final class VaultProjectService: ObservableObject {
         guard let p = VaultProject.parse(folder: folder) else { return nil }
         var out = projects.filter { $0.name != p.name }
         out.append(p)
-        projects = VaultProject.sorted(out)
+        publish(VaultProject.sorted(out))
         return p
     }
 
@@ -190,6 +214,7 @@ final class VaultProjectService: ObservableObject {
         guard let vaultRoot = vaultPath?.path else { return }
         let misses = cwds.filter { cwdFolderCache[$0] == nil }
         guard !misses.isEmpty else { return }
+        let primedAt = filingGeneration
         let resolved: [String: String?] = await Task.detached(priority: .userInitiated) {
             var out: [String: String?] = [:]
             for cwd in misses {
@@ -197,6 +222,8 @@ final class VaultProjectService: ObservableObject {
             }
             return out
         }.value
+        // Resolved against claims a newer scan replaced: drop, never cache.
+        guard primedAt == filingGeneration else { return }
         for (k, v) in resolved { cwdFolderCache[k] = v }
     }
 
@@ -227,6 +254,7 @@ final class VaultProjectService: ObservableObject {
                      cwdCounts: [String: [String: Int]]) async {
         guard let vaultRoot = vaultPath?.path, !sessions.isEmpty else { return }
         let known = cwdFolderCache
+        let primedAt = filingGeneration
         let result: (filed: [String: String?], resolved: [String: String?]) =
             await Task.detached(priority: .userInitiated) {
                 var resolved: [String: String?] = [:]
@@ -253,6 +281,7 @@ final class VaultProjectService: ObservableObject {
                 }
                 return (filed, resolved)
             }.value
+        guard primedAt == filingGeneration else { return }
         for (k, v) in result.resolved { cwdFolderCache[k] = v }
         for (k, v) in result.filed { sessionFolderCache[k] = v }
     }

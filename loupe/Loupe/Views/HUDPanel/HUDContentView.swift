@@ -618,11 +618,13 @@ struct SessionHistoryView: View {
     }
 
     /// Changes when the history's sessions, the index's per-session tallies
-    /// or either host's claims directory change: the inputs of `primeFiling`.
+    /// or either host's claims directory change, or a vault scan changes what
+    /// the projects claim: the inputs of `primeFiling`.
     private var filingSignature: [Double] {
         [Double(sessionHistory.sessions.count),
          Double(sessionHistory.transcriptCwdGeneration),
-         SessionFiling.claimsSignature()]
+         SessionFiling.claimsSignature(),
+         Double(vaultProjects.filingGeneration)]
     }
 
     private func deleteSession(_ sessionId: String) {

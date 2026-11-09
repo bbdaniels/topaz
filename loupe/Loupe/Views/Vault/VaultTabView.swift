@@ -205,6 +205,7 @@ struct VaultTabView: View {
         h.combine(Set(agentsService.lostTrees.map(\.cwd)))
         h.combine(sessionHistory.transcriptCwdGeneration)
         h.combine(SessionFiling.claimsSignature())
+        h.combine(projectService.filingGeneration)
         return h.finalize()
     }
 

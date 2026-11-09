@@ -28,6 +28,10 @@ struct VaultProject: Identifiable, Hashable {
     /// raw titles), read during the scan so the daily note needs no second
     /// read of every `Tasks.md`.
     var openTasks: [String] = []
+    /// What this project claims for session filing (`cwds:` and `repo:`),
+    /// read by the same `ProjectResolver.claims` the resolver uses, so a
+    /// scan can tell when the filing of any session may have changed.
+    var claims = ProjectResolver.Claims()
 
     /// First absolute non-glob `cwds:` entry (for "New session here").
     var primaryCwd: String? {
@@ -100,8 +104,17 @@ extension VaultProject {
             manuscript: fm.scalar("manuscript"),
             parent: fm.scalar("parent"),
             nextDue: ActiveTasks.nextDue(in: tasks),
-            openTasks: ActiveTasks.openItems(in: tasks).map(\.rawTitle)
+            openTasks: ActiveTasks.openItems(in: tasks).map(\.rawTitle),
+            claims: ProjectResolver.claims(tasksContent: content)
         )
+    }
+
+    /// Folder name → claims: everything `ProjectResolver` and
+    /// `SessionFiling` read from the vault. When it differs between two
+    /// scans (a project added, removed, renamed or merged, a `cwds:` or
+    /// `repo:` edited), every cached filing may be wrong.
+    static func filingClaims(_ projects: [VaultProject]) -> [String: ProjectResolver.Claims] {
+        Dictionary(projects.map { ($0.name, $0.claims) }, uniquingKeysWith: { a, _ in a })
     }
 
     /// THE read of a project's `Tasks.md`, shared by the scan and the
@@ -285,7 +298,7 @@ struct Frontmatter {
 enum ProjectResolver {
 
     /// One project's attribution claims, read from its `Tasks.md`.
-    struct Claims: Equatable {
+    struct Claims: Hashable {
         var cwds: [String] = []     // absolute paths and globs
         var repos: [String] = []    // normalized `repo:` values
     }

@@ -319,6 +319,30 @@ final class VaultWatchTests: XCTestCase {
         }
     }
 
+    // MARK: Refiling when the claims change
+
+    func testTheFilingClaimsChangeOnlyWithTheProjectsOrWhatTheyClaim() {
+        func project(_ name: String, _ front: String, _ body: String = "") -> VaultProject {
+            VaultProject.parse(folder: URL(fileURLWithPath: "/vault/" + name),
+                               tasksContent: "---\nstatus: active\n\(front)---\n## Active\n\(body)")
+        }
+        let wezterm = "cwds:\n  - /Users/b/Projects/wezterm\n"
+        let before = VaultProject.filingClaims([project("Tech Setup", "")])
+        // A new project that claims a directory (Topaz, 2026-11-08) changes it.
+        let added = VaultProject.filingClaims([project("Tech Setup", ""), project("Topaz", wezterm)])
+        XCTAssertNotEqual(before, added)
+        // A folder renamed or merged away (ClaudeHUD into Topaz) changes it.
+        XCTAssertNotEqual(VaultProject.filingClaims([project("ClaudeHUD", wezterm)]),
+                          VaultProject.filingClaims([project("Topaz", wezterm)]))
+        // An edited repo: claim changes it.
+        XCTAssertNotEqual(added, VaultProject.filingClaims([
+            project("Tech Setup", ""), project("Topaz", wezterm + "repo:\n  - github.com/bbdaniels/wezterm\n")]))
+        // A task ticked or added does not: only the claims are read.
+        XCTAssertEqual(added, VaultProject.filingClaims([
+            project("Tech Setup", "", "- [ ] New task\n"), project("Topaz", wezterm, "- [x] Done\n")]))
+        XCTAssertEqual(project("Topaz", wezterm).claims.cwds, ["/Users/b/Projects/wezterm"])
+    }
+
     // MARK: Daily note from the scan
 
     func testTheScanKeepsEachProjectsOpenTasks() {
