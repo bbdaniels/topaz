@@ -55,7 +55,7 @@ class HUDPanelController {
         // exclusive — you get one.)
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.isOpaque = true
-        panel.backgroundColor = NSColor.windowBackgroundColor
+        panel.backgroundColor = .hudBackground
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden
         // No close, minimize or zoom buttons (Ben, 2026-11-08): the panel opens and closes
@@ -134,5 +134,17 @@ class HUDPanelController {
         let action = PanelToggle.action(isVisible: visible, isOnActiveSpace: onSpace, isUncovered: uncovered)
         logger.info("panel toggle: visible \(visible, privacy: .public), on this desktop \(onSpace, privacy: .public), uncovered \(uncovered, privacy: .public), key \(self.panel?.isKeyWindow ?? false, privacy: .public): \(action == .hide ? "hide" : "show", privacy: .public)")
         if action == .hide { hide() } else { show() }
+    }
+}
+
+extension NSColor {
+    /// The panel's background (Ben, 2026-11-08: "don't let the match drift, fix it at the same
+    /// color as the main hud background"). A fixed color, not windowBackgroundColor, which macOS
+    /// tints from the desktop behind the window. Topaz's tab bar uses the same two values
+    /// (bbdaniels/personal deploy/mac/wezterm/wezterm.lua, HUD_BG); change both together.
+    static let hudBackground = NSColor(name: "hudBackground") { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x28 / 255.0, green: 0x25 / 255.0, blue: 0x24 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
     }
 }

@@ -66,8 +66,13 @@ struct ScreenCoverView: View {
                 .allowsHitTesting(false)
 
                 VStack(spacing: unit) {
-                    Text("🐾")
-                        .font(.system(size: pawSize))
+                    // The Topaz gem in grayscale, in place of Lockpaw's paw (Ben, 2026-11-08).
+                    Image("TopazGem")
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: pawSize, height: pawSize)
+                        .grayscale(1)
+                        .accessibilityLabel("Topaz")
                         .shadow(color: Color.accentColor.opacity(0.18 + breathe * 0.10),
                                 radius: 34 + breathe * 8, y: 10)
                         .shadow(color: .black.opacity(0.15), radius: 45, y: 30)
