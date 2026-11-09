@@ -205,7 +205,8 @@ final class ProjectResolverTests: XCTestCase {
     // MARK: The golden file shared with the personal repo
 
     /// `personal/lib/fixtures/resolver_cases.json`, read from the personal
-    /// checkout beside this one (or `$RESOLVER_CASES`). Missing is a failure,
+    /// checkout beside the Topaz one, whose loupe/ holds this file (or
+    /// `$RESOLVER_CASES`). Missing is a failure,
     /// never a skip: a copied snapshot could drift from the Python side.
     static var casesURL: URL {
         if let override = ProcessInfo.processInfo.environment["RESOLVER_CASES"], !override.isEmpty {
@@ -213,7 +214,8 @@ final class ProjectResolverTests: XCTestCase {
         }
         return URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()      // LoupeTests
-            .deletingLastPathComponent()      // the ClaudeHUD checkout
+            .deletingLastPathComponent()      // loupe
+            .deletingLastPathComponent()      // the Topaz checkout (wezterm)
             .deletingLastPathComponent()      // Projects
             .appending(path: "personal/lib/fixtures/resolver_cases.json")
     }

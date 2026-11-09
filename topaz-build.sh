@@ -8,7 +8,8 @@
 # keeps working.
 #
 # Topaz.app holds its helpers (2026-11-08): Loupe and Topaz Launcher, both
-# from the repository ~/Projects/ClaudeHUD, are built here and nested in
+# from loupe/ in this repository (merged in from bbdaniels/claudehud on
+# 2026-11-08, history kept), are built here and nested in
 # Contents/Helpers, and Topaz launches them and keeps them alive
 # (wezterm-gui/src/helpers.rs). This script is
 # the one way either is built and installed; it replaced
@@ -45,7 +46,7 @@
 # Install from outside Topaz (quitting it ends the shells in its tabs). The
 # config goes in after the app because config_builder() rejects keys an
 # older build does not know. Config: bbdaniels/personal, deploy/mac/wezterm.
-# The ClaudeHUD repository's tests (both helpers') must pass, or nothing is
+# The helpers' tests (loupe/, LoupeTests, both helpers') must pass, or nothing is
 # built or installed.
 set -euo pipefail
 cd "${0:A:h}"
@@ -54,7 +55,9 @@ STAGE=target/topaz/Topaz.app
 APP=/Applications/Topaz.app
 CONFIG_INSTALLER=$HOME/Projects/personal/deploy/mac/wezterm/install-wezterm.sh
 IDENTITY="ClaudeHUD Dev"
-HELPERS_REPO=$HOME/Projects/ClaudeHUD
+# The helpers' source, and the last commit that changed it (HelpersCommit).
+HELPERS_DIR=$PWD/loupe
+HELPERS_COMMIT=$(git log -1 --format=%h -- loupe)
 HELPERS_BUILD=/tmp/topaz-helpers-build
 LOUPE_BUILT=$HELPERS_BUILD/Build/Products/Release/Loupe.app
 LOUPE_IN=Contents/Helpers/Loupe.app
@@ -67,7 +70,7 @@ mkdir -p $LOGS
 # Test, then build Loupe and Topaz Launcher (Release) into $LOUPE_BUILT
 # and $LAUNCHER_BUILT.
 build_helpers() {
-  ( cd $HELPERS_REPO
+  ( cd $HELPERS_DIR
     xcodebuild test -scheme LoupeTests -destination platform=macOS -jobs 2 \
       > $LOGS/helpers-test.log 2>&1 || true
     /usr/bin/grep -E "Executed [0-9]+ tests" $LOGS/helpers-test.log | tail -1
@@ -99,7 +102,7 @@ nest_loupe() {
   local tmp=$(mktemp -d /tmp/topaz-loupe.XXXXXX)
   ditto $LOUPE_BUILT $tmp/Loupe.app
   codesign --force --options runtime --timestamp=none \
-    --entitlements $HELPERS_REPO/Loupe/Resources/Loupe.entitlements \
+    --entitlements $HELPERS_DIR/Loupe/Resources/Loupe.entitlements \
     --sign $IDENTITY $tmp/Loupe.app
   codesign --verify --strict $tmp/Loupe.app
   mkdir -p $1/Contents/Helpers
@@ -218,7 +221,7 @@ install_helper() {
     echo "Topaz has not relaunched $name after 20 s." >&2
     exit 1
   fi
-  echo "$name $(git -C $HELPERS_REPO rev-parse --short HEAD) is running inside $APP (pid $new)."
+  echo "$name $HELPERS_COMMIT is running inside $APP (pid $new)."
 }
 
 case ${1:-} in
@@ -246,7 +249,7 @@ $PB -c "Set :CFBundleName Topaz" -c "Set :CFBundleDisplayName Topaz" \
     -c "Set :CFBundleIdentifier com.bbdaniels.topaz" \
     -c "Set :NSMicrophoneUsageDescription Topaz listens while you hold fn to dictate, and programs running in Topaz may ask to use the microphone." \
     -c "Add :TopazCommit string $(git rev-parse --short HEAD)" \
-    -c "Add :HelpersCommit string $(git -C $HELPERS_REPO rev-parse --short HEAD)" \
+    -c "Add :HelpersCommit string $HELPERS_COMMIT" \
     $STAGE/Contents/Info.plist
 rm -f $STAGE/*.dylib
 mkdir -p $STAGE/Contents/MacOS $STAGE/Contents/Resources
