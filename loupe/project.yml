@@ -31,7 +31,7 @@ targets:
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         INFOPLIST_FILE: Loupe/Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: Loupe/Resources/Loupe.entitlements
-        CODE_SIGN_IDENTITY: "ClaudeHUD Dev"
+        CODE_SIGN_IDENTITY: "Topaz Dev"
         SWIFT_VERSION: "5.9"
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_HARDENED_RUNTIME: YES
@@ -55,7 +55,7 @@ targets:
         PRODUCT_NAME: "Topaz Launcher"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         INFOPLIST_FILE: TopazLauncher/Info.plist
-        CODE_SIGN_IDENTITY: "ClaudeHUD Dev"
+        CODE_SIGN_IDENTITY: "Topaz Dev"
         SWIFT_VERSION: "5.9"
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_HARDENED_RUNTIME: YES

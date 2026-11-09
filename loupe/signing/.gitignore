@@ -1,0 +1,3 @@
+# The signing identity's private key never goes in git (README.md).
+*.p12
+*.key

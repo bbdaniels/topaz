@@ -31,7 +31,7 @@
 #                                  the same for Topaz Launcher (once a full
 #                                  build has installed a Topaz that has it)
 #
-# Signing: every binary with the "ClaudeHUD Dev" certificate and the hardened
+# Signing: every binary with the "Topaz Dev" certificate and the hardened
 # runtime, inside out and without --deep (which would stamp Topaz's
 # entitlements on a helper): Loupe with its own entitlements, Topaz
 # Launcher with none, then Topaz's other binaries, then the outer bundle
@@ -54,7 +54,7 @@ export PATH="$HOME/.cargo/bin:$PATH" CARGO_NET_GIT_FETCH_WITH_CLI=true
 STAGE=target/topaz/Topaz.app
 APP=/Applications/Topaz.app
 CONFIG_INSTALLER=$HOME/Projects/personal/deploy/mac/wezterm/install-wezterm.sh
-IDENTITY="ClaudeHUD Dev"
+IDENTITY="Topaz Dev"
 # The helpers' source, and the last commit that changed it (HelpersCommit).
 HELPERS_DIR=$PWD/loupe
 HELPERS_COMMIT=$(git log -1 --format=%h -- loupe)
@@ -141,6 +141,9 @@ designated() {
 # Every signature valid, and each helper's designated requirement the one
 # its permission grants were made to: $2 (Loupe) and $3 (Topaz Launcher)
 # if given, else that of the installed Topaz's copy, if it has one.
+# TOPAZ_NEW_IDENTITY=1 reports a changed requirement and goes on, for the one
+# build after the signing certificate is replaced (loupe/signing/README.md);
+# every permission must then be granted again.
 verify() {
   codesign --verify --deep --strict $1
   codesign --verify --deep --strict $1/$LOUPE_IN
@@ -154,7 +157,7 @@ verify() {
   fi
   if [[ -n $launcher_want && $launcher_want != "$(designated $1/$LAUNCHER_IN)" ]]; then
     echo "Topaz Launcher's designated requirement is not $launcher_want: its grants would not carry over." >&2
-    exit 1
+    [[ ${TOPAZ_NEW_IDENTITY:-} == 1 ]] || exit 1
   fi
   local want=${2:-}
   if [[ -z $want && $1 != $APP && -d $APP/$LOUPE_IN ]]; then
@@ -162,7 +165,7 @@ verify() {
   fi
   if [[ -n $want && $want != "$(designated $1/$LOUPE_IN)" ]]; then
     echo "Loupe's designated requirement is not $want: its grants would not carry over." >&2
-    exit 1
+    [[ ${TOPAZ_NEW_IDENTITY:-} == 1 ]] || exit 1
   fi
 }
 
