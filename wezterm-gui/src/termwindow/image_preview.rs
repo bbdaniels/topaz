@@ -671,9 +671,14 @@ pub fn remote_read_command(path: &str, cd: Option<&str>) -> Option<String> {
 pub enum ImageSource {
     File(PathBuf),
     Url(String),
-    /// A file on a host reached over ssh: the ssh command, and the remote
-    /// shell command that writes the file to its output.
-    Remote { ssh: Vec<String>, command: String },
+    /// A file on a host reached over ssh: the ssh command, the remote
+    /// shell command that writes the file to its output, and the path as
+    /// the pane spelled it.
+    Remote {
+        ssh: Vec<String>,
+        command: String,
+        path: String,
+    },
 }
 
 /// The reference the mouse rests on.
@@ -876,7 +881,7 @@ fn load_image(source: &ImageSource) -> anyhow::Result<(Arc<ImageData>, u32, u32)
             std::fs::read(path)?
         }
         ImageSource::Url(url) => fetch_url(url)?,
-        ImageSource::Remote { ssh, command } => fetch_remote(ssh, command)?,
+        ImageSource::Remote { ssh, command, .. } => fetch_remote(ssh, command)?,
     };
     decode_for_preview(&bytes)
 }
@@ -922,6 +927,80 @@ fn pane_files(pane: &Arc<dyn Pane>) -> PaneFiles {
             .get_current_working_dir(CachePolicy::AllowStale)
             .and_then(|url| url.to_file_path().ok()),
         home: dirs_next::home_dir(),
+    }
+}
+
+/// Where a remote image is saved to be opened on this machine: a folder
+/// per source under the cache, so two files of one name do not collide,
+/// and the file's own name, so the viewer's title reads as usual.
+fn remote_copy_path(cache: &Path, source: &ImageSource, path: &str) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    source.hash(&mut hasher);
+    let name = Path::new(path)
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_else(|| "image.png".into());
+    cache
+        .join("Topaz")
+        .join("previews")
+        .join(format!("{:016x}", hasher.finish()))
+        .join(name)
+}
+
+/// Opens a file in the image viewer: Preview on macOS, the desktop's
+/// default elsewhere.
+fn open_in_viewer(path: &Path) {
+    let path = path.to_string_lossy();
+    if cfg!(target_os = "macos") {
+        wezterm_open_url::open_with(&path, "Preview");
+    } else {
+        wezterm_open_url::open_url(&path);
+    }
+}
+
+/// Opens the image a reference names: a file here in the viewer, a URL in
+/// the browser, a file on the far host fetched afresh to the cache and
+/// then opened in the viewer.
+fn open_image_source(source: ImageSource) {
+    match source {
+        ImageSource::File(path) => open_in_viewer(&path),
+        ImageSource::Url(url) => wezterm_open_url::open_url(&url),
+        ImageSource::Remote {
+            ref ssh,
+            ref command,
+            ref path,
+        } => {
+            let cache = match dirs_next::cache_dir() {
+                Some(cache) => cache,
+                None => {
+                    log::error!("image preview: no cache folder to open {path} from");
+                    return;
+                }
+            };
+            let target = remote_copy_path(&cache, &source, path);
+            let (ssh, command, shown) = (ssh.clone(), command.clone(), path.clone());
+            let spawned = std::thread::Builder::new()
+                .name("image-preview-open".to_string())
+                .spawn(move || {
+                    let saved = (|| -> anyhow::Result<()> {
+                        let bytes = fetch_remote(&ssh, &command)?;
+                        let folder = target.parent().context("cache folder")?;
+                        std::fs::create_dir_all(folder)?;
+                        let partial = folder.join(".partial");
+                        std::fs::write(&partial, &bytes)?;
+                        std::fs::rename(&partial, &target)?;
+                        Ok(())
+                    })();
+                    match saved {
+                        Ok(()) => open_in_viewer(&target),
+                        Err(err) => log::error!("image preview: cannot open {shown}: {err:#}"),
+                    }
+                });
+            if let Err(err) = spawned {
+                log::error!("image preview: cannot start a thread to open {path}: {err:#}");
+            }
+        }
     }
 }
 
@@ -972,6 +1051,21 @@ impl crate::TermWindow {
         }
     }
 
+    /// Opens the image under the pointer, if it previews; true when it did.
+    /// Called for the click that would open a link.
+    pub fn open_hovered_image(&self) -> bool {
+        if !self.image_preview_wants_pointer() {
+            return false;
+        }
+        match &self.image_preview.hover {
+            Some(hover) => {
+                open_image_source(hover.source.clone());
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Whether a spelling of a path would preview in a pane whose paths
     /// name `files`; starts the fetch of a remote file not yet tried.
     fn resolve_path(&mut self, files: &PaneFiles, text: &str) -> Found {
@@ -993,6 +1087,7 @@ impl crate::TermWindow {
                 let source = ImageSource::Remote {
                     ssh: ssh.clone(),
                     command,
+                    path: text.to_string(),
                 };
                 let retry = match self.image_preview.loads.get(&source) {
                     None => true,
@@ -1761,6 +1856,20 @@ mod test {
             ]
         );
         assert!(reference_marks(&rows, width, |_| None).is_empty());
+    }
+
+    #[test]
+    fn remote_copy_keeps_the_name_apart_by_source() {
+        let source = |command: &str| ImageSource::Remote {
+            ssh: strings(&["ssh", "imac"]),
+            command: command.to_string(),
+            path: "out/fig 1.png".to_string(),
+        };
+        let a = remote_copy_path(Path::new("/c"), &source("a"), "out/fig 1.png");
+        let b = remote_copy_path(Path::new("/c"), &source("b"), "out/fig 1.png");
+        assert_eq!(a.file_name().unwrap(), "fig 1.png");
+        assert!(a.starts_with("/c/Topaz/previews"));
+        assert_ne!(a, b);
     }
 
     #[test]

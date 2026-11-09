@@ -3227,6 +3227,9 @@ impl TermWindow {
                 open_uri(lua, window, pane, link.uri().to_string())
             }))
             .detach();
+        } else {
+            // Topaz: a click on an image reference that previews opens it.
+            self.open_hovered_image();
         }
     }
     fn close_current_pane(&mut self, confirm: bool) {
