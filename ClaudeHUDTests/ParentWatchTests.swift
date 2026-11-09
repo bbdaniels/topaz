@@ -1,4 +1,5 @@
 import XCTest
+import TopazKit
 
 final class ParentWatchTests: XCTestCase {
     func testTheParentIsReadFromTopazPid() {

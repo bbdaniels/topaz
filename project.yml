@@ -6,6 +6,11 @@ options:
   xcodeVersion: "16.0"
   createIntermediateGroups: true
 
+# Code the Topaz helpers share (Loupe and Topaz Launcher).
+packages:
+  TopazKit:
+    path: TopazKit
+
 targets:
   ClaudeHUD:
     type: application
@@ -18,6 +23,7 @@ targets:
       - path: ClaudeHUD/Resources/ntfy-notify.sh
     dependencies:
       - sdk: CoreText.framework
+      - package: TopazKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.claudehud.app
@@ -30,6 +36,31 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         ENABLE_HARDENED_RUNTIME: YES
         ENABLE_DEBUG_DYLIB: NO
+
+  # Topaz Launcher: the application launcher (Option-Space) and Magnet's
+  # window snapping, nested in Topaz.app/Contents/Helpers and supervised by
+  # Topaz (wezterm-gui helpers.rs). Built by topaz-build.sh.
+  TopazLauncher:
+    type: application
+    platform: macOS
+    sources:
+      - path: TopazLauncher
+        excludes:
+          - Info.plist
+    dependencies:
+      - package: TopazKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bbdaniels.topaz.launcher
+        PRODUCT_NAME: "Topaz Launcher"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        INFOPLIST_FILE: TopazLauncher/Info.plist
+        CODE_SIGN_IDENTITY: "ClaudeHUD Dev"
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_DEBUG_DYLIB: NO
+    scheme: {}
 
   # Unit tests for the pure, Foundation-only logic. No host app: the bundle
   # compiles the sources it tests directly, so tests never launch ClaudeHUD.
@@ -53,11 +84,16 @@ targets:
       - path: ClaudeHUD/Services/WezTermService.swift
       - path: ClaudeHUD/Services/RemoteControlReload.swift
       - path: ClaudeHUD/Services/MenuBarHiding.swift
-      - path: ClaudeHUD/Services/ParentWatch.swift
       - path: ClaudeHUD/Services/DictationLight.swift
       - path: ClaudeHUD/Views/StripHosting.swift
       - path: ClaudeHUD/Services/PanelPlacement.swift
       - path: ClaudeHUD/Services/SecurityTool.swift
+      - path: TopazLauncher/AppMatcher.swift
+      - path: TopazLauncher/SnapLayout.swift
+      - path: TopazLauncher/HotKeyCenter.swift
+      - path: TopazLauncher/WindowMover.swift
+    dependencies:
+      - package: TopazKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.claudehud.tests

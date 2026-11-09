@@ -1,5 +1,6 @@
 import SwiftUI
 import Cocoa
+import TopazKit
 import os
 
 private let logger = Logger(subsystem: "com.claudehud", category: "MenuBar")
