@@ -1,18 +1,18 @@
-# ClaudeHUD
+# Loupe
 
-A macOS menu bar app that puts Claude Code at your fingertips. ClaudeHUD is a lightweight, always-available floating panel for browsing past sessions and surfacing context from your calendar, email, and Obsidian notes -- all without leaving your current workflow.
+A macOS menu bar app that puts Claude Code at your fingertips. Loupe is a lightweight, always-available floating panel for browsing past sessions and surfacing context from your calendar, email, and Obsidian notes -- all without leaving your current workflow.
 
 ![macOS 14+](https://img.shields.io/badge/macOS-14%2B-blue)
 ![Swift](https://img.shields.io/badge/Swift-5.9-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 <p align="center">
-  <img src="docs/screenshot.png" alt="ClaudeHUD floating panel showing recent sessions grouped by project" width="320">
+  <img src="docs/screenshot.png" alt="Loupe floating panel showing recent sessions grouped by project" width="320">
 </p>
 
 ## What it is
 
-ClaudeHUD is a SwiftUI wrapper around the [Claude CLI](https://docs.anthropic.com/en/docs/claude-code), plus productivity overlays that pull from the apps you already use. Click the menu bar icon and the floating panel snaps open on any Space:
+Loupe is a SwiftUI wrapper around the [Claude CLI](https://docs.anthropic.com/en/docs/claude-code), plus productivity overlays that pull from the apps you already use. Click the menu bar icon and the floating panel snaps open on any Space:
 
 - **History** -- full-text search across every Claude Code session on your machine, grouped by project
 - **Today** -- AI-briefed daily calendar with email + Obsidian cross-references
@@ -21,7 +21,7 @@ ClaudeHUD is a SwiftUI wrapper around the [Claude CLI](https://docs.anthropic.co
 - **Substack** -- inline reader for your Substack inbox
 - **Notifications** -- desktop + iPhone/Apple Watch alerts when Claude needs attention
 
-The CLI handles auth, tool execution, and MCP connections. ClaudeHUD provides the UI and the cross-app context.
+The CLI handles auth, tool execution, and MCP connections. Loupe provides the UI and the cross-app context.
 
 ## Features
 
@@ -41,7 +41,7 @@ The CLI handles auth, tool execution, and MCP connections. ClaudeHUD provides th
 
 **Projects tab** -- One row per Obsidian vault project (a top-level folder with a `Tasks.md`), grouped by recent activity. Each row shows badges for its live Claude Code sessions (click to focus their WezTerm tabs) and a launch button that opens a new session with the project's vault context. A project whose `Tasks.md` frontmatter declares `parent: <folder>` is shown inset under that project, and the parent row sums its children's badges. Sessions are attributed to projects by the `cwds:` frontmatter, longest match wins.
 
-**Terminal integration** -- Sessions open as tabs in one WezTerm window (`/Applications/WezTerm.app`). Clicking a session focuses the tab it is already in, or opens one: an iMac session's tab is titled with its tmux session name (`rc-<name>`), a Mac session's `<project> (Mac)`. ClaudeHUD drives WezTerm through `wezterm cli` and brings it forward through NSWorkspace, so it needs no Apple Events permission. Closing a tab only detaches; the session runs on until it is stopped from ClaudeHUD.
+**Terminal integration** -- Sessions open as tabs in one WezTerm window (`/Applications/WezTerm.app`). Clicking a session focuses the tab it is already in, or opens one: an iMac session's tab is titled with its tmux session name (`rc-<name>`), a Mac session's `<project> (Mac)`. Loupe drives WezTerm through `wezterm cli` and brings it forward through NSWorkspace, so it needs no Apple Events permission. Closing a tab only detaches; the session runs on until it is stopped from Loupe.
 
 **Obsidian notes** -- Browse and preview your Obsidian vault directly in the app. Click the archive box icon in the tab bar to access:
 - Multi-vault support with persistent vault selection
@@ -75,10 +75,10 @@ The CLI handles auth, tool execution, and MCP connections. ClaudeHUD provides th
 To set up mobile notifications:
 1. Install the [ntfy app](https://ntfy.sh) on your iPhone
 2. Subscribe to a topic name of your choice (e.g. `claude-myname`)
-3. In ClaudeHUD, click the bell icon, enable Mobile, and paste the same topic name
+3. In Loupe, click the bell icon, enable Mobile, and paste the same topic name
 4. Click "Test notification" to verify
 
-Notifications fire on `AskUserQuestion` and `PermissionRequest` hooks. ClaudeHUD automatically installs the hook script to `~/.claude/hooks/` -- no manual setup needed.
+Notifications fire on `AskUserQuestion` and `PermissionRequest` hooks. Loupe automatically installs the hook script to `~/.claude/hooks/` -- no manual setup needed.
 
 **Rich markdown rendering** -- Claude's responses render with full markdown support:
 - Headings, bold, italic, inline code, strikethrough
@@ -96,7 +96,7 @@ Notifications fire on `AskUserQuestion` and `PermissionRequest` hooks. ClaudeHUD
 
 **Info panel** -- Click the (i) icon in the header for a quick setup guide and dependency status checks.
 
-**Always available** -- Floating panel accessible from the menu bar on any Space or desktop. Click the menu bar icon to toggle, right-click for quick actions. ClaudeHUD also has a Dock icon and a Cmd-Tab entry, and a Dock click brings the panel forward.
+**Always available** -- Floating panel accessible from the menu bar on any Space or desktop. Click the menu bar icon to toggle, right-click for quick actions. Loupe also has a Dock icon and a Cmd-Tab entry, and a Dock click brings the panel forward.
 
 ## Requirements
 
@@ -114,26 +114,26 @@ Clone and build with [XcodeGen](https://github.com/yonaskolb/XcodeGen):
 ```bash
 brew install xcodegen  # if not already installed
 xcodegen generate
-xcodebuild -scheme ClaudeHUD -configuration Debug build
+xcodebuild -scheme Loupe -configuration Debug build
 ```
 
-Or open `ClaudeHUD.xcodeproj` in Xcode and build with Cmd+B.
+Or open `Loupe.xcodeproj` in Xcode and build with Cmd+B.
 
-The built app will be in `~/Library/Developer/Xcode/DerivedData/ClaudeHUD-*/Build/Products/Debug/ClaudeHUD.app`.
+The built app will be in `~/Library/Developer/Xcode/DerivedData/Loupe-*/Build/Products/Debug/Loupe.app`.
 
 Unit tests (the pure, Foundation-only logic such as the Claude process classifier; no host app):
 
 ```bash
-xcodebuild test -scheme ClaudeHUDTests -destination 'platform=macOS'
+xcodebuild test -scheme LoupeTests -destination 'platform=macOS'
 ```
 
-`ClaudeHUD --process-report` prints the menu's Background Jobs and Orphans sections and the classification of every Claude worker, then exits. It is read-only and safe to run while the menu-bar app is running.
+`Loupe --process-report` prints the menu's Background Jobs and Orphans sections and the classification of every Claude worker, then exits. It is read-only and safe to run while the menu-bar app is running.
 
-`ClaudeHUD --remote-control on|off|status` turns the persistent Remote Control server (launchd agent `com.bbdaniels.claude-remote-control`, the header antenna) on or off, or prints its state; the same load and unload as the header toggle. The server's sessions are its child processes, so a restart or turn-off would end them all: while it has a live session, the header toggle's change waits and is applied once the last one ends (the antenna's status line says so), and the command line refuses and changes nothing.
+`Loupe --remote-control on|off|status` turns the persistent Remote Control server (launchd agent `com.bbdaniels.claude-remote-control`, the header antenna) on or off, or prints its state; the same load and unload as the header toggle. The server's sessions are its child processes, so a restart or turn-off would end them all: while it has a live session, the header toggle's change waits and is applied once the last one ends (the antenna's status line says so), and the command line refuses and changes nothing.
 
 ## How it works
 
-ClaudeHUD wraps the [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) in a native SwiftUI interface. It launches `claude` as a subprocess with `--output-format stream-json` for real-time streaming, and maintains session IDs for multi-turn conversations. The CLI handles all the heavy lifting -- authentication, tool execution, MCP connections -- while ClaudeHUD provides the UI layer.
+Loupe wraps the [Claude CLI](https://docs.anthropic.com/en/docs/claude-code) in a native SwiftUI interface. It launches `claude` as a subprocess with `--output-format stream-json` for real-time streaming, and maintains session IDs for multi-turn conversations. The CLI handles all the heavy lifting -- authentication, tool execution, MCP connections -- while Loupe provides the UI layer.
 
 The app searches for the Claude CLI in common installation paths:
 - `~/.local/bin/claude`
@@ -146,9 +146,9 @@ The app searches for the Claude CLI in common installation paths:
 ## Architecture
 
 ```
-ClaudeHUD/
+Loupe/
   App/
-    ClaudeHUDApp.swift     # App entry, menu bar setup
+    LoupeApp.swift     # App entry, menu bar setup
     AppState.swift         # Global state, services
   Models/
     NoteFile.swift         # Obsidian file tree model
@@ -195,7 +195,7 @@ ClaudeHUD/
     ntfy-notify.sh         # Bundled notification hook script
     permission-watcher.sh  # Bundled permission watcher hook script
     Info.plist
-    ClaudeHUD.entitlements
+    Loupe.entitlements
 ```
 
 ## License
