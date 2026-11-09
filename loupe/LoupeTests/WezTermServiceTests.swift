@@ -58,6 +58,10 @@ final class WezTermServiceTests: XCTestCase {
         XCTAssertEqual(WezTerm.setTabTitleArgs(paneId: 4, title: "rc-x"),
                        ["cli", "--no-auto-start", "set-tab-title", "--pane-id", "4", "rc-x"])
         XCTAssertEqual(WezTerm.activateTabArgs(tabId: 3), ["cli", "--no-auto-start", "activate-tab", "--tab-id", "3"])
+        // The edit's text goes on stdin as a bracketed paste: no text
+        // argument, no --no-paste, nothing that would press Return.
+        XCTAssertEqual(WezTerm.sendTextArgs(paneId: 7), ["cli", "--no-auto-start", "send-text", "--pane-id", "7"])
+        XCTAssertEqual(WezTerm.activatePaneArgs(paneId: 7), ["cli", "--no-auto-start", "activate-pane", "--pane-id", "7"])
         XCTAssertEqual(WezTerm.shellArgv("claude attach abc"),
                        ["/bin/zsh", "-l", "-c", "source ~/.zshrc 2>/dev/null; unset CLAUDECODE; claude attach abc"])
     }

@@ -143,6 +143,18 @@ enum WezTerm {
         ["cli", "--no-auto-start", "activate-tab", "--tab-id", String(tabId)]
     }
 
+    /// Paste text into a pane (the inline editor's Send): the text comes on
+    /// stdin, which `send-text` reads when given no text argument, and goes
+    /// as a bracketed paste, its default, so a shell or Claude's prompt
+    /// takes it as one paste and runs nothing. No `--no-paste`, no newline.
+    static func sendTextArgs(paneId: Int) -> [String] {
+        ["cli", "--no-auto-start", "send-text", "--pane-id", String(paneId)]
+    }
+
+    static func activatePaneArgs(paneId: Int) -> [String] {
+        ["cli", "--no-auto-start", "activate-pane", "--pane-id", String(paneId)]
+    }
+
     /// The argv of a tab running `command` in a login zsh, as any shell
     /// window would (PATH entries such as ~/.local/bin, which holds `claude`,
     /// live in ~/.zprofile), outside any Claude session's environment.
@@ -213,6 +225,57 @@ enum WezTerm {
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         return p.terminationStatus == 0 ? data : nil
+    }
+
+    /// Run the command line with `input` on stdin; nil when it exits 0, else
+    /// what went wrong, its standard error when it wrote one.
+    static func run(_ args: [String], input: Data) -> String? {
+        guard isInstalled else { return "Topaz is not installed at \(appPath)." }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: cliPath)
+        p.arguments = args
+        p.environment = cliEnvironment(ProcessInfo.processInfo.environment)
+        let stdin = Pipe()
+        // A write to a command line that already exited fails with EPIPE
+        // instead of raising SIGPIPE, which would end Loupe.
+        _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+        let err = Pipe()
+        p.standardInput = stdin
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = err
+        do { try p.run() } catch { return "wezterm did not start: \(error.localizedDescription)" }
+        // Standard error is read on its own thread while stdin is written, so
+        // a command line that writes much before reading cannot block both.
+        var errData = Data()
+        let reader = DispatchQueue.global(qos: .userInitiated)
+        let done = DispatchSemaphore(value: 0)
+        reader.async {
+            errData = err.fileHandleForReading.readDataToEndOfFile()
+            done.signal()
+        }
+        do {
+            try stdin.fileHandleForWriting.write(contentsOf: input)
+            try stdin.fileHandleForWriting.close()
+        } catch {
+            try? stdin.fileHandleForWriting.close()
+        }
+        done.wait()
+        p.waitUntilExit()
+        guard p.terminationStatus != 0 else { return nil }
+        let message = String(decoding: errData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return message.isEmpty ? "wezterm exited with status \(p.terminationStatus)." : message
+    }
+
+    /// Paste `text` into pane `paneId` and make that pane the active one in
+    /// its tab and window; nil when the paste went, else why it did not.
+    /// Blocks while the command line runs, so it is called off the main
+    /// thread. Bringing Topaz forward is the caller's (`activateApp`).
+    static func sendText(_ text: String, paneId: Int) -> String? {
+        if let error = run(sendTextArgs(paneId: paneId), input: Data(text.utf8)) { return error }
+        if run(activatePaneArgs(paneId: paneId)) == nil {
+            logger.error("WezTerm did not activate pane \(paneId)")
+        }
+        return nil
     }
 
     /// The panes WezTerm has; nil when it is not running (or not installed).

@@ -32,6 +32,12 @@
 //! becomes a hand over it. A path on the far host is marked once its fetch
 //! has succeeded, so a remote path is fetched as soon as it is on screen
 //! and its preview is ready when the pointer arrives.
+//!
+//! A path whose file name ends in `.edit.md` names a passage Claude wants
+//! Ben to edit. It is found, resolved, fetched and marked exactly as an
+//! image path is, but it has no picture to preview: a plain click hands it
+//! to Loupe's editor instead of Preview, through a request file that names
+//! the local copy and the pane it came from.
 
 use crate::quad::{QuadTrait, TripleLayerQuadAllocator, TripleLayerQuadAllocatorTrait};
 use crate::termwindow::render::paint::AllowImage;
@@ -48,7 +54,7 @@ use std::convert::TryFrom;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use termwiz::image::{ImageData, ImageDataType};
@@ -60,6 +66,18 @@ use window::color::LinearRgba;
 /// SVG and PDF are left out: the image decoder behind image cells reads
 /// neither, and a second rasterizer is out of scope.
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp"];
+/// The ending of the name of a file Claude writes for Ben to edit.
+const EDIT_EXTENSION: &str = "edit.md";
+/// Every file name ending that makes a path a reference, after its dot,
+/// and what kind of reference it makes.
+const REFERENCE_EXTENSIONS: &[(&str, ReferenceKind)] = &[
+    ("png", ReferenceKind::Image),
+    ("jpg", ReferenceKind::Image),
+    ("jpeg", ReferenceKind::Image),
+    ("gif", ReferenceKind::Image),
+    ("webp", ReferenceKind::Image),
+    (EDIT_EXTENSION, ReferenceKind::Edit),
+];
 /// Largest file or download read for a preview.
 const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 /// Longest side of the decoded preview; larger images are scaled down on
@@ -100,14 +118,37 @@ const SSH_FLAGS_WITH_VALUE: &str = "BbcDEeFIiJLlmOoPpQRSWw";
 /// control commands.
 const SSH_DROPPED_VALUE_FLAGS: &str = "DLORW";
 
+/// What a reference names, and so what a click on it does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReferenceKind {
+    /// An image: previewed on hover, opened in Preview on a click.
+    Image,
+    /// A passage to edit (`.edit.md`): no preview, opened in Loupe's
+    /// editor on a click.
+    Edit,
+}
+
+/// True if `s` ends in `.ext` with at least one char before the dot, in
+/// any case.
+fn has_extension(s: &str, ext: &str) -> bool {
+    let lower = s.to_ascii_lowercase();
+    lower.len() > ext.len() + 1
+        && lower.ends_with(ext)
+        && lower.as_bytes()[lower.len() - ext.len() - 1] == b'.'
+}
+
 /// True if `s` ends in `.png`, `.jpg`, `.jpeg`, `.gif` or `.webp`, in any case.
 pub fn has_image_extension(s: &str) -> bool {
-    let lower = s.to_ascii_lowercase();
-    IMAGE_EXTENSIONS.iter().any(|ext| {
-        lower.len() > ext.len() + 1
-            && lower.ends_with(ext)
-            && lower.as_bytes()[lower.len() - ext.len() - 1] == b'.'
-    })
+    IMAGE_EXTENSIONS.iter().any(|ext| has_extension(s, ext))
+}
+
+/// The kind of reference a path spelling makes by the end of its name,
+/// if it makes one: an image, or a file to edit (`.edit.md`, in any case).
+pub fn reference_kind(s: &str) -> Option<ReferenceKind> {
+    REFERENCE_EXTENSIONS
+        .iter()
+        .find(|(ext, _)| has_extension(s, ext))
+        .map(|&(_, kind)| kind)
 }
 
 /// One spelling of a reference: where it starts (a char index into the
@@ -127,6 +168,7 @@ pub struct ImageReference {
     /// Char index one past the last char of the reference.
     pub end: usize,
     pub is_url: bool,
+    pub kind: ReferenceKind,
     pub candidates: Vec<Candidate>,
 }
 
@@ -169,11 +211,12 @@ fn starts_with_at(chars: &[char], idx: usize, prefix: &str) -> bool {
     true
 }
 
-/// If an image extension starts after the dot at `dot`, and is followed by
-/// the end of the text, whitespace, a closing delimiter or end punctuation,
-/// returns the index one past the extension.
-fn extension_end(chars: &[char], dot: usize) -> Option<usize> {
-    for ext in IMAGE_EXTENSIONS {
+/// If a reference's extension starts after the dot at `dot`, and is
+/// followed by the end of the text, whitespace, a closing delimiter or end
+/// punctuation, returns the index one past the extension and the kind of
+/// reference it makes.
+fn extension_end(chars: &[char], dot: usize) -> Option<(usize, ReferenceKind)> {
+    for &(ext, kind) in REFERENCE_EXTENSIONS {
         let start = dot + 1;
         let after = start + ext.len();
         if after > chars.len() {
@@ -190,10 +233,10 @@ fn extension_end(chars: &[char], dot: usize) -> Option<usize> {
             i == chars.len() || chars[i].is_whitespace() || is_closing_delimiter(chars[i])
         };
         if ends_here(after) {
-            return Some(after);
+            return Some((after, kind));
         }
         if matches!(chars[after], '.' | '!' | '?') && ends_here(after + 1) {
-            return Some(after);
+            return Some((after, kind));
         }
     }
     None
@@ -209,14 +252,13 @@ fn normalize_candidate(mut candidate: Candidate) -> Option<Candidate> {
     if candidate.text.contains('\u{2026}') || candidate.text.starts_with("...") {
         return None;
     }
-    if !has_image_extension(&candidate.text) {
-        return None;
-    }
+    reference_kind(&candidate.text)?;
     Some(candidate)
 }
 
-/// Finds the image paths and http(s) image URLs in `text`, in order of
-/// where they end.
+/// Finds the image paths, http(s) image URLs and paths of files to edit in
+/// `text`, in order of where they end. A file to edit is only ever a path,
+/// never a URL.
 pub fn find_image_references(text: &str) -> Vec<ImageReference> {
     let chars: Vec<char> = text.chars().collect();
     let mut refs = vec![];
@@ -240,6 +282,7 @@ pub fn find_image_references(text: &str) -> Vec<ImageReference> {
                 refs.push(ImageReference {
                     end,
                     is_url: true,
+                    kind: ReferenceKind::Image,
                     candidates: vec![Candidate { start, text: url }],
                 });
             }
@@ -257,8 +300,8 @@ pub fn find_image_references(text: &str) -> Vec<ImageReference> {
         if prev.is_whitespace() || prev == '/' || is_opening_delimiter(prev) {
             continue;
         }
-        let end = match extension_end(&chars, dot) {
-            Some(end) => end,
+        let (end, kind) = match extension_end(&chars, dot) {
+            Some(found) => found,
             None => continue,
         };
 
@@ -307,6 +350,7 @@ pub fn find_image_references(text: &str) -> Vec<ImageReference> {
             refs.push(ImageReference {
                 end,
                 is_url: false,
+                kind,
                 candidates,
             });
         }
@@ -505,14 +549,15 @@ pub fn reference_marks(
     merged
 }
 
-/// Resolves a path spelling to an existing image file: `~/` against the
-/// home directory, a relative path against the pane's working directory.
+/// Resolves a path spelling to the existing image or file to edit it
+/// names: `~/` against the home directory, a relative path against the
+/// pane's working directory.
 pub fn resolve_local_path(
     candidate: &str,
     cwd: Option<&Path>,
     home: Option<&Path>,
 ) -> Option<PathBuf> {
-    if !has_image_extension(candidate) {
+    if reference_kind(candidate).is_none() {
         return None;
     }
     let path = if let Some(rest) = candidate.strip_prefix("~/") {
@@ -650,11 +695,11 @@ pub fn tmux_cd_command(remote: &[String]) -> Option<String> {
     ))
 }
 
-/// The remote shell command that writes the image a path names to its
-/// output, or fails: `~/` against the remote home, a relative path after
-/// `cd` (none: a relative path cannot be resolved).
+/// The remote shell command that writes the image or file to edit a path
+/// names to its output, or fails: `~/` against the remote home, a relative
+/// path after `cd` (none: a relative path cannot be resolved).
 pub fn remote_read_command(path: &str, cd: Option<&str>) -> Option<String> {
-    if !has_image_extension(path) {
+    if reference_kind(path).is_none() {
         return None;
     }
     let read = |target: String| format!("f={target} && test -f \"$f\" && exec cat -- \"$f\"");
@@ -681,6 +726,19 @@ pub enum ImageSource {
     },
 }
 
+impl ImageSource {
+    /// What the source names, read from the end of its name as the finder
+    /// read it.
+    pub fn kind(&self) -> ReferenceKind {
+        let name = match self {
+            ImageSource::File(path) => path.to_string_lossy(),
+            ImageSource::Url(_) => return ReferenceKind::Image,
+            ImageSource::Remote { path, .. } => path.as_str().into(),
+        };
+        reference_kind(&name).unwrap_or(ReferenceKind::Image)
+    }
+}
+
 /// The reference the mouse rests on.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImageHover {
@@ -691,6 +749,8 @@ pub struct ImageHover {
     last_row: StableRowIndex,
     /// Column of the reference's first char on `first_row`.
     start_col: usize,
+    /// The spelling of the path or URL as the pane showed it.
+    shown: String,
     /// The text of `first_row..=last_row` when the hover began; the
     /// preview vanishes once it differs.
     row_texts: Vec<String>,
@@ -699,6 +759,8 @@ pub struct ImageHover {
 enum LoadState {
     Loading,
     Ready(Arc<ImageData>, u32, u32),
+    /// A file to edit was read: it exists, and there is nothing to draw.
+    Found,
     Failed,
 }
 
@@ -871,7 +933,20 @@ fn fetch_remote(ssh: &[String], command: &str) -> anyhow::Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn load_image(source: &ImageSource) -> anyhow::Result<(Arc<ImageData>, u32, u32)> {
+/// Reads a source on a worker thread: an image is decoded for its preview;
+/// a file to edit is only found to exist (a remote one is fetched, so the
+/// mark appears only when the far host has it).
+fn load_source(source: &ImageSource) -> anyhow::Result<LoadState> {
+    if source.kind() == ReferenceKind::Edit {
+        match source {
+            ImageSource::File(path) => anyhow::ensure!(path.is_file(), "{} is gone", path.display()),
+            ImageSource::Url(url) => anyhow::bail!("{url} is not a file to edit"),
+            ImageSource::Remote { ssh, command, .. } => {
+                fetch_remote(ssh, command)?;
+            }
+        }
+        return Ok(LoadState::Found);
+    }
     let bytes = match source {
         ImageSource::File(path) => {
             let len = std::fs::metadata(path)?.len();
@@ -885,7 +960,8 @@ fn load_image(source: &ImageSource) -> anyhow::Result<(Arc<ImageData>, u32, u32)
         ImageSource::Url(url) => fetch_url(url)?,
         ImageSource::Remote { ssh, command, .. } => fetch_remote(ssh, command)?,
     };
-    decode_for_preview(&bytes)
+    let (data, width, height) = decode_for_preview(&bytes)?;
+    Ok(LoadState::Ready(data, width, height))
 }
 
 /// What the paths a pane prints name: files on this machine (a local
@@ -932,22 +1008,45 @@ fn pane_files(pane: &Arc<dyn Pane>) -> PaneFiles {
     }
 }
 
-/// Where a remote image is saved to be opened on this machine: a folder
-/// per source under the cache, so two files of one name do not collide,
-/// and the file's own name, so the viewer's title reads as usual.
+/// Where a remote file is saved to be opened on this machine: under the
+/// cache's `Topaz/previews` for an image and `Topaz/edits` for a file to
+/// edit, in a folder per source so two files of one name do not collide,
+/// and under the file's own name, so the viewer's title reads as usual.
 fn remote_copy_path(cache: &Path, source: &ImageSource, path: &str) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     source.hash(&mut hasher);
+    let (folder, fallback) = match source.kind() {
+        ReferenceKind::Image => ("previews", "image.png"),
+        ReferenceKind::Edit => ("edits", "passage.edit.md"),
+    };
     let name = Path::new(path)
         .file_name()
         .map(|n| n.to_os_string())
-        .unwrap_or_else(|| "image.png".into());
+        .unwrap_or_else(|| fallback.into());
     cache
         .join("Topaz")
-        .join("previews")
+        .join(folder)
         .join(format!("{:016x}", hasher.finish()))
         .join(name)
+}
+
+/// Fetches a file on the far host afresh to its copy in the cache, written
+/// beside it first and then renamed into place, and returns the copy.
+fn save_remote_copy(source: &ImageSource) -> anyhow::Result<PathBuf> {
+    let (ssh, command, path) = match source {
+        ImageSource::Remote { ssh, command, path } => (ssh, command, path),
+        _ => anyhow::bail!("{source:?} is not a file on the far host"),
+    };
+    let cache = dirs_next::cache_dir().context("no cache folder")?;
+    let target = remote_copy_path(&cache, source, path);
+    let bytes = fetch_remote(ssh, command)?;
+    let folder = target.parent().context("cache folder")?;
+    std::fs::create_dir_all(folder)?;
+    let partial = folder.join(".partial");
+    std::fs::write(&partial, &bytes)?;
+    std::fs::rename(&partial, &target)?;
+    Ok(target)
 }
 
 /// Opens a file in the image viewer: Preview on macOS, the desktop's
@@ -961,46 +1060,171 @@ fn open_in_viewer(path: &Path) {
     }
 }
 
-/// Opens the image a reference names: a file here in the viewer, a URL in
-/// the browser, a file on the far host fetched afresh to the cache and
-/// then opened in the viewer.
-fn open_image_source(source: ImageSource) {
-    match source {
-        ImageSource::File(path) => open_in_viewer(&path),
-        ImageSource::Url(url) => wezterm_open_url::open_url(&url),
-        ImageSource::Remote {
-            ref ssh,
-            ref command,
-            ref path,
-        } => {
-            let cache = match dirs_next::cache_dir() {
-                Some(cache) => cache,
+/// The version of the request file Topaz hands to Loupe's editor.
+const EDIT_REQUEST_VERSION: u32 = 1;
+/// The extension of a request file; Loupe opens files of this kind.
+const EDIT_REQUEST_EXTENSION: &str = "topazedit";
+/// Counts the requests written by this process, so two in one millisecond
+/// get different names.
+static EDIT_REQUESTS_WRITTEN: AtomicU64 = AtomicU64::new(0);
+
+/// What a request to edit a file says, in this order: the request
+/// version, the mux pane the reference was clicked in (the id `wezterm cli
+/// list` reports), the absolute path of the local file to edit, the path
+/// as the pane showed it, and whether the file is a copy fetched from the
+/// far host of an ssh pane.
+#[derive(serde::Serialize)]
+struct EditRequest<'a> {
+    version: u32,
+    pane_id: PaneId,
+    file: &'a str,
+    shown: &'a str,
+    remote: bool,
+}
+
+/// The JSON text of a request to edit `file`.
+fn edit_request_json(pane_id: PaneId, file: &Path, shown: &str, remote: bool) -> anyhow::Result<String> {
+    anyhow::ensure!(file.is_absolute(), "{} is not an absolute path", file.display());
+    let file = file
+        .to_str()
+        .with_context(|| format!("{} is not UTF-8", file.display()))?;
+    Ok(serde_json::to_string(&EditRequest {
+        version: EDIT_REQUEST_VERSION,
+        pane_id,
+        file,
+        shown,
+        remote,
+    })?)
+}
+
+/// Where a new request file goes: the cache's `Topaz/edits/requests`, named
+/// by the time, this process and a count, so no two requests share a name.
+fn edit_request_path(cache: &Path) -> PathBuf {
+    let millis = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let count = EDIT_REQUESTS_WRITTEN.fetch_add(1, Ordering::Relaxed);
+    cache.join("Topaz").join("edits").join("requests").join(format!(
+        "{millis}-{}-{count}.{EDIT_REQUEST_EXTENSION}",
+        std::process::id()
+    ))
+}
+
+/// Writes a request to edit `file` under `cache`, beside its final name
+/// first and then renamed into place, and returns its path.
+fn write_edit_request(
+    cache: &Path,
+    pane_id: PaneId,
+    file: &Path,
+    shown: &str,
+    remote: bool,
+) -> anyhow::Result<PathBuf> {
+    let json = edit_request_json(pane_id, file, shown, remote)?;
+    let request = edit_request_path(cache);
+    let folder = request.parent().context("request folder")?;
+    std::fs::create_dir_all(folder)?;
+    let name = request.file_name().context("request name")?.to_string_lossy();
+    let partial = folder.join(format!(".{name}.partial"));
+    std::fs::write(&partial, json)?;
+    std::fs::rename(&partial, &request)?;
+    Ok(request)
+}
+
+/// Loupe's bundle nested in this app, which holds the editor; none in a
+/// build outside an app bundle, and none off macOS.
+#[cfg(target_os = "macos")]
+fn loupe_bundle() -> Option<PathBuf> {
+    crate::helpers::helper_bundle("Loupe")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn loupe_bundle() -> Option<PathBuf> {
+    None
+}
+
+/// Hands a local file to Loupe's editor: writes a request naming it and the
+/// pane it came from, and opens the request with Loupe.
+fn open_in_editor(
+    loupe: &Path,
+    pane_id: PaneId,
+    file: &Path,
+    shown: &str,
+    remote: bool,
+) -> anyhow::Result<()> {
+    let cache = dirs_next::cache_dir().context("no cache folder")?;
+    let request = write_edit_request(&cache, pane_id, file, shown, remote)?;
+    let status = Command::new("/usr/bin/open")
+        .arg("-a")
+        .arg(loupe)
+        .arg(&request)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("run /usr/bin/open")?;
+    anyhow::ensure!(
+        status.success(),
+        "open -a {} {}: {status}",
+        loupe.display(),
+        request.display()
+    );
+    Ok(())
+}
+
+/// Opens what a reference names: an image file here in the viewer, a URL
+/// in the browser, a file to edit in Loupe's editor. A file on the far
+/// host is fetched afresh to the cache first, on a thread, and the copy
+/// opened.
+fn open_reference(hover: ImageHover) {
+    let ImageHover {
+        pane_id,
+        source,
+        shown,
+        ..
+    } = hover;
+    let kind = source.kind();
+    let loupe = match kind {
+        ReferenceKind::Image => None,
+        ReferenceKind::Edit => {
+            if !cfg!(target_os = "macos") {
+                log::error!("image preview: cannot edit {shown}: the editor is macOS only");
+                return;
+            }
+            match loupe_bundle() {
+                Some(loupe) => Some(loupe),
                 None => {
-                    log::error!("image preview: no cache folder to open {path} from");
+                    log::error!("image preview: cannot edit {shown}: this build has no Loupe.app");
                     return;
                 }
-            };
-            let target = remote_copy_path(&cache, &source, path);
-            let (ssh, command, shown) = (ssh.clone(), command.clone(), path.clone());
+            }
+        }
+    };
+    let remote = matches!(source, ImageSource::Remote { .. });
+    match source {
+        ImageSource::Url(url) => wezterm_open_url::open_url(&url),
+        ImageSource::File(path) if kind == ReferenceKind::Image => open_in_viewer(&path),
+        source => {
             let spawned = std::thread::Builder::new()
                 .name("image-preview-open".to_string())
                 .spawn(move || {
-                    let saved = (|| -> anyhow::Result<()> {
-                        let bytes = fetch_remote(&ssh, &command)?;
-                        let folder = target.parent().context("cache folder")?;
-                        std::fs::create_dir_all(folder)?;
-                        let partial = folder.join(".partial");
-                        std::fs::write(&partial, &bytes)?;
-                        std::fs::rename(&partial, &target)?;
+                    let opened = (|| -> anyhow::Result<()> {
+                        let local = match &source {
+                            ImageSource::File(path) => path.clone(),
+                            _ => save_remote_copy(&source)?,
+                        };
+                        match &loupe {
+                            Some(loupe) => open_in_editor(loupe, pane_id, &local, &shown, remote)?,
+                            None => open_in_viewer(&local),
+                        }
                         Ok(())
                     })();
-                    match saved {
-                        Ok(()) => open_in_viewer(&target),
-                        Err(err) => log::error!("image preview: cannot open {shown}: {err:#}"),
+                    if let Err(err) = opened {
+                        log::error!("image preview: cannot open {shown}: {err:#}");
                     }
                 });
             if let Err(err) = spawned {
-                log::error!("image preview: cannot start a thread to open {path}: {err:#}");
+                log::error!("image preview: cannot start a thread to open a reference: {err:#}");
             }
         }
     }
@@ -1039,23 +1263,28 @@ impl crate::TermWindow {
         }
     }
 
-    /// Whether the pointer rests on a reference that previews, so it shows
-    /// as a hand.
+    /// Whether the pointer rests on a reference that previews or a file to
+    /// edit that exists, so it shows as a hand.
     pub fn image_preview_wants_pointer(&self) -> bool {
         let hover = match &self.image_preview.hover {
             Some(hover) => hover,
             None => return false,
         };
+        // A file here to edit was found when the hover began, and is
+        // never loaded.
+        if matches!(hover.source, ImageSource::File(_)) && hover.source.kind() == ReferenceKind::Edit {
+            return true;
+        }
         match self.image_preview.loads.get(&hover.source).map(|e| &e.state) {
-            Some(LoadState::Ready(..)) => true,
+            Some(LoadState::Ready(..)) | Some(LoadState::Found) => true,
             Some(LoadState::Loading) => !matches!(hover.source, ImageSource::Remote { .. }),
             _ => false,
         }
     }
 
-    /// Takes a plain left click on a reference that previews: the press is
-    /// held back from the pane, and the release opens the image if the
-    /// pointer is still on that reference. Returns true for an event it
+    /// Takes a plain left click on a reference that previews or a file to
+    /// edit: the press is held back from the pane, and the release opens
+    /// what it names if the pointer is still on that reference. Returns true for an event it
     /// took, which the pane must not see.
     pub fn image_preview_click(&mut self, event: &::window::MouseEvent) -> bool {
         use ::window::{MouseEventKind, MousePress};
@@ -1068,7 +1297,7 @@ impl crate::TermWindow {
             MouseEventKind::Release(MousePress::Left) => match self.image_preview.pressed.take() {
                 Some(pressed) => {
                     if self.image_preview.hover.as_ref() == Some(&pressed) {
-                        open_image_source(pressed.source);
+                        open_reference(pressed);
                     }
                     true
                 }
@@ -1080,23 +1309,25 @@ impl crate::TermWindow {
         }
     }
 
-    /// Opens the image under the pointer, if it previews; true when it did.
-    /// Called for the click that would open a link.
+    /// Opens the image or file to edit under the pointer, if it previews or
+    /// exists; true when it did. Called for the click that would open a
+    /// link.
     pub fn open_hovered_image(&self) -> bool {
         if !self.image_preview_wants_pointer() {
             return false;
         }
         match &self.image_preview.hover {
             Some(hover) => {
-                open_image_source(hover.source.clone());
+                open_reference(hover.clone());
                 true
             }
             None => false,
         }
     }
 
-    /// Whether a spelling of a path would preview in a pane whose paths
-    /// name `files`; starts the fetch of a remote file not yet tried.
+    /// Whether a spelling of a path would preview, or names a file to edit
+    /// that exists, in a pane whose paths name `files`; starts the fetch of
+    /// a remote file not yet tried.
     fn resolve_path(&mut self, files: &PaneFiles, text: &str) -> Found {
         match files {
             PaneFiles::Local { cwd, home } => {
@@ -1121,7 +1352,9 @@ impl crate::TermWindow {
                 let retry = match self.image_preview.loads.get(&source) {
                     None => true,
                     Some(entry) => match entry.state {
-                        LoadState::Ready(..) => return Found::Ready(source, None),
+                        LoadState::Ready(..) | LoadState::Found => {
+                            return Found::Ready(source, None)
+                        }
                         LoadState::Loading => return Found::Pending(source),
                         LoadState::Failed => entry.started.elapsed() > REMOTE_RETRY,
                     },
@@ -1210,6 +1443,7 @@ impl crate::TermWindow {
                         first_row: first_fetched + first_r as StableRowIndex,
                         last_row: first_fetched + last_r as StableRowIndex,
                         start_col,
+                        shown: candidate.text.clone(),
                         row_texts: lines[first_r..=last_r]
                             .iter()
                             .map(|l| l.as_str().into_owned())
@@ -1217,7 +1451,10 @@ impl crate::TermWindow {
                     };
                     match found {
                         Found::Ready(source, modified) => {
-                            if !matches!(source, ImageSource::Remote { .. }) {
+                            // A file here to edit has nothing to load.
+                            if !matches!(source, ImageSource::Remote { .. })
+                                && source.kind() == ReferenceKind::Image
+                            {
                                 self.ensure_image_loading(&source, modified);
                             }
                             return Some(make(source));
@@ -1303,17 +1540,14 @@ impl crate::TermWindow {
         let spawned = std::thread::Builder::new()
             .name("image-preview".to_string())
             .spawn(move || {
-                let result = load_image(&source);
+                let result = load_source(&source);
                 if let Err(err) = &result {
                     log::debug!("image preview of {source:?}: {err:#}");
                 }
                 window.notify(TermWindowNotif::Apply(Box::new(move |tw| {
                     if let Some(entry) = tw.image_preview.loads.get_mut(&source) {
                         if entry.generation == generation {
-                            entry.state = match result {
-                                Ok((data, width, height)) => LoadState::Ready(data, width, height),
-                                Err(_) => LoadState::Failed,
-                            };
+                            entry.state = result.unwrap_or(LoadState::Failed);
                             tw.image_preview.loads_finished += 1;
                         }
                     }
@@ -1899,6 +2133,108 @@ mod test {
         assert_eq!(a.file_name().unwrap(), "fig 1.png");
         assert!(a.starts_with("/c/Topaz/previews"));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn files_to_edit_are_references() {
+        assert_eq!(reference_kind("/tmp/p.edit.md"), Some(ReferenceKind::Edit));
+        assert_eq!(reference_kind("A.EDIT.MD"), Some(ReferenceKind::Edit));
+        assert_eq!(reference_kind("a.png"), Some(ReferenceKind::Image));
+        assert_eq!(reference_kind("notes.md"), None);
+        assert_eq!(reference_kind("edit.md"), None);
+        assert_eq!(reference_kind("a.edit.md.txt"), None);
+        assert_eq!(reference_kind("a.editmd"), None);
+
+        let found = |line: &str| -> Vec<(ReferenceKind, Vec<String>)> {
+            find_image_references(line)
+                .into_iter()
+                .map(|r| (r.kind, r.candidates.into_iter().map(|c| c.text).collect()))
+                .collect()
+        };
+        assert_eq!(
+            found("Wrote ~/Projects/x/para 3.edit.md."),
+            vec![(
+                ReferenceKind::Edit,
+                vec!["~/Projects/x/para 3.edit.md".to_string(), "3.edit.md".to_string()]
+            )]
+        );
+        assert_eq!(
+            found("See notes.md, edit.md.txt, a.edit.md.txt and /tmp/b.png"),
+            vec![(ReferenceKind::Image, vec!["/tmp/b.png".to_string()])]
+        );
+        let refs = find_image_references("Edit `/tmp/ai-med/p2.edit.md` and Read(/tmp/a.png)");
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].kind, ReferenceKind::Edit);
+        assert_eq!(refs[0].candidates[0].text, "/tmp/ai-med/p2.edit.md");
+        assert_eq!(refs[1].kind, ReferenceKind::Image);
+        assert!(!refs[1].is_url);
+        // A URL is never a file to edit.
+        assert!(find_image_references("https://example.com/p.edit.md").is_empty());
+    }
+
+    #[test]
+    fn files_to_edit_resolve_like_images() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("p 1.edit.md");
+        std::fs::write(&file, b"text").unwrap();
+        std::fs::write(dir.path().join("p.md"), b"text").unwrap();
+        assert_eq!(
+            resolve_local_path("p 1.edit.md", Some(dir.path()), None),
+            Some(file.clone())
+        );
+        assert_eq!(resolve_local_path("p.md", Some(dir.path()), None), None);
+        assert_eq!(
+            remote_read_command("~/p.edit.md", None).unwrap(),
+            "f=\"$HOME\"/'p.edit.md' && test -f \"$f\" && exec cat -- \"$f\""
+        );
+        assert_eq!(ImageSource::File(file).kind(), ReferenceKind::Edit);
+        assert_eq!(
+            ImageSource::File(PathBuf::from("/a/b.png")).kind(),
+            ReferenceKind::Image
+        );
+        let remote = ImageSource::Remote {
+            ssh: strings(&["ssh", "imac"]),
+            command: "c".to_string(),
+            path: "out/p 1.edit.md".to_string(),
+        };
+        assert_eq!(remote.kind(), ReferenceKind::Edit);
+        let copy = remote_copy_path(Path::new("/c"), &remote, "out/p 1.edit.md");
+        assert!(copy.starts_with("/c/Topaz/edits"));
+        assert_eq!(copy.file_name().unwrap(), "p 1.edit.md");
+    }
+
+    #[test]
+    fn edit_request_escapes_its_strings() {
+        let file = Path::new("/c/Topaz/edits/0f/it's \"q\".edit.md");
+        let shown = "out\\x\n\u{1}\u{e9}.edit.md";
+        let json = edit_request_json(7, file, shown, true).unwrap();
+        assert_eq!(
+            json,
+            r#"{"version":1,"pane_id":7,"file":"/c/Topaz/edits/0f/it's \"q\".edit.md","shown":"out\\x\n\u0001é.edit.md","remote":true}"#
+        );
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["file"], file.to_str().unwrap());
+        assert_eq!(value["shown"], shown);
+        assert_eq!(value["remote"], true);
+        assert!(edit_request_json(7, Path::new("rel/p.edit.md"), "p.edit.md", false).is_err());
+    }
+
+    #[test]
+    fn edit_requests_get_their_own_files() {
+        let cache = tempfile::tempdir().unwrap();
+        let file = Path::new("/w/p.edit.md");
+        let a = write_edit_request(cache.path(), 3, file, "p.edit.md", false).unwrap();
+        let b = write_edit_request(cache.path(), 3, file, "p.edit.md", false).unwrap();
+        assert_ne!(a, b);
+        let folder = cache.path().join("Topaz").join("edits").join("requests");
+        assert_eq!(a.parent().unwrap(), folder);
+        assert_eq!(a.extension().unwrap(), EDIT_REQUEST_EXTENSION);
+        assert_eq!(
+            std::fs::read_to_string(&a).unwrap(),
+            edit_request_json(3, file, "p.edit.md", false).unwrap()
+        );
+        // Only the two requests are left, no partial file.
+        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 2);
     }
 
     #[test]

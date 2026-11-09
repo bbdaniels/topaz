@@ -31,7 +31,7 @@ fn backoff(current: Duration, uptime: Duration) -> (Duration, Duration) {
 }
 
 #[cfg(target_os = "macos")]
-pub use imp::{start, stop_all};
+pub use imp::{helper_bundle, start, stop_all};
 
 #[cfg(not(target_os = "macos"))]
 pub fn start() {}
@@ -77,13 +77,11 @@ mod imp {
     /// A build run outside an app bundle has none, and starts nothing.
     pub fn start() {
         START.call_once(|| {
-            let Some(dir) = helpers_dir() else { return };
             for (index, helper) in HELPERS.iter().enumerate() {
-                let bundle = dir.join(format!("{}.app", helper.name));
-                if !bundle.is_dir() {
-                    log::debug!("helpers: no {}", bundle.display());
+                let Some(bundle) = helper_bundle(helper.name) else {
+                    log::debug!("helpers: no {}.app in this build", helper.name);
                     continue;
-                }
+                };
                 let spawned = std::thread::Builder::new()
                     .name(format!("helper {}", helper.name))
                     .spawn(move || supervise(index, &bundle));
@@ -110,6 +108,18 @@ mod imp {
         let exe = std::env::current_exe().ok()?;
         // Contents/MacOS/wezterm-gui -> Contents/Helpers
         Some(exe.parent()?.parent()?.join("Helpers"))
+    }
+
+    /// The bundle of the helper called `name` (without `.app`) nested in
+    /// this app, if this build has it. A build run outside an app bundle
+    /// has none.
+    pub fn helper_bundle(name: &str) -> Option<PathBuf> {
+        let bundle = helpers_dir()?.join(format!("{name}.app"));
+        if bundle.is_dir() {
+            Some(bundle)
+        } else {
+            None
+        }
     }
 
     fn stopping() -> bool {

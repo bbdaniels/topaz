@@ -82,6 +82,7 @@ targets:
       - path: Loupe/Services/PanelToggle.swift
       - path: Loupe/Services/HostProcs.swift
       - path: Loupe/Services/WezTermService.swift
+      - path: Loupe/Services/EditRequest.swift
       - path: Loupe/Services/RemoteControlReload.swift
       - path: Loupe/Services/MenuBarHiding.swift
       - path: Loupe/Services/DictationLight.swift

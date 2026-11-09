@@ -379,6 +379,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appState.screenCoverService.toggle()
     }
 
+    /// Files opened with Loupe: Topaz's inline editor requests
+    /// (`open -a Loupe.app <request>.topazedit`), each shown in an editor
+    /// panel (`EditorPanelManager`).
+    func application(_ application: NSApplication, open urls: [URL]) {
+        EditorPanelManager.shared.open(urls: urls)
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         tearDown()
     }

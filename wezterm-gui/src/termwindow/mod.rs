@@ -3228,7 +3228,8 @@ impl TermWindow {
             }))
             .detach();
         } else {
-            // Topaz: a click on an image reference that previews opens it.
+            // Topaz: a click on an image reference that previews, or on a
+            // file to edit, opens it.
             self.open_hovered_image();
         }
     }
