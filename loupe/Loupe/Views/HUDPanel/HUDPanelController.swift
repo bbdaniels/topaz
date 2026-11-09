@@ -1,5 +1,8 @@
 import Cocoa
 import SwiftUI
+import os
+
+private let logger = Logger(subsystem: "com.bbdaniels.topaz.loupe", category: "Panel")
 
 class HUDPanelController {
     private var panel: NSPanel?
@@ -123,12 +126,13 @@ class HUDPanelController {
         // actually on the desktop you're looking at; otherwise show() (which
         // activates the app and, via .moveToActiveSpace, pulls the panel to the
         // current Space).
-        // A buried panel (under another app's window) is brought forward, not
-        // hidden: hide only the panel in front (`PanelToggle`).
-        let action = PanelToggle.action(isVisible: panel?.isVisible ?? false,
-                                        isOnActiveSpace: panel?.isOnActiveSpace ?? false,
-                                        appIsActive: NSApp.isActive,
-                                        isKeyWindow: panel?.isKeyWindow ?? false)
+        // A panel wholly buried under another app's window is brought
+        // forward; any panel that can be seen is hidden (`PanelToggle`).
+        let visible = panel?.isVisible ?? false
+        let onSpace = panel?.isOnActiveSpace ?? false
+        let uncovered = panel?.occlusionState.contains(.visible) ?? false
+        let action = PanelToggle.action(isVisible: visible, isOnActiveSpace: onSpace, isUncovered: uncovered)
+        logger.info("panel toggle: visible \(visible, privacy: .public), on this desktop \(onSpace, privacy: .public), uncovered \(uncovered, privacy: .public), key \(self.panel?.isKeyWindow ?? false, privacy: .public): \(action == .hide ? "hide" : "show", privacy: .public)")
         if action == .hide { hide() } else { show() }
     }
 }
