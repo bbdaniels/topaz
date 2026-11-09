@@ -1,12 +1,14 @@
 //! Loupe's menu bar gem shows blue while a dictation is listening (Ben,
-//! 2026-11-08): from the moment the speech to text socket is connected, so
-//! that words are actually being heard, until fn is released or the session
-//! ends however it ends (cancel, error, the service closing). Topaz tells
+//! 2026-11-08): from the instant fn is pressed, before the microphone and the
+//! speech to text socket open (waiting for the connection made it lag the
+//! press by about half a second), until fn is released or the session ends
+//! however it ends (cancel, error, the service closing). Topaz tells
 //! Loupe with a distributed notification, `NOTIFICATION`, whose userInfo has
 //! `state` ("listening" or "stopped") and `pid` (Topaz's, which Loupe was
 //! given as TOPAZ_PID). While listening it is posted again every
-//! `REFRESH_EVERY`, and Loupe turns the gem back on its own when no refresh
-//! comes in time, so a lost "stopped" cannot leave it blue.
+//! `REFRESH_EVERY`, the wait for the connection included, and Loupe turns
+//! the gem back on its own when no refresh comes in time, so a lost
+//! "stopped" cannot leave it blue.
 //!
 //! This is the state alone, without the posting, so that it can be tested.
 use std::time::{Duration, Instant};
@@ -116,6 +118,25 @@ mod tests {
         }
         assert_eq!(*posts.borrow(), [State::Listening, State::Stopped]);
     }
+    #[test]
+    fn a_slow_connection_keeps_the_light_refreshed_from_the_press() {
+        // The session lights it at the press and refreshes it while it waits
+        // for the socket (CONNECT_TIMEOUT is 3 s, Loupe's staleness too), so
+        // the gem never lapses before the first word.
+        let (posts, post) = recorded();
+        let mut light = Light::new(post);
+        let pressed = Instant::now();
+        for ms in (0..=2500).step_by(10) {
+            light.listening(pressed + Duration::from_millis(ms));
+        }
+        assert_eq!(posts.borrow().len(), 3, "at 0, 1 and 2 s");
+        // fn released while still connecting: off at once, and only once.
+        light.stopped();
+        drop(light);
+        assert_eq!(posts.borrow().last(), Some(&State::Stopped));
+        assert_eq!(posts.borrow().len(), 4);
+    }
+
     #[test]
     fn the_states_are_named_as_loupe_reads_them() {
         assert_eq!(State::Listening.as_str(), "listening");

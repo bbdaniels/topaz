@@ -142,7 +142,15 @@ fn run(
     shared: &Shared,
 ) -> anyhow::Result<End> {
     let timing = &shared.timing;
-    // Capture first, so that audio buffers while the socket opens.
+    // Loupe's gem is blue from the fn press, before the microphone and the
+    // socket open, until fn is released; dropping the light on any way out
+    // (cancel, error, `?`) turns it off.
+    let mut light = light::Light::new(|state: light::State| {
+        post_to_loupe(state);
+        timing.log(format_args!("told Loupe {}", state.as_str()));
+    });
+    light.listening(Instant::now());
+    // Capture next, so that audio buffers while the socket opens.
     let (audio_tx, audio) = channel::<Vec<f32>>();
     let first_buffer = Arc::new(OnceLock::new());
     let (stream, input_rate) = start_capture(audio_tx, Arc::clone(&first_buffer), timing)?;
@@ -164,15 +172,11 @@ fn run(
         }
     };
 
-    let Some((mut socket, mut finish_now)) = connect_in_time(keyterms, commands, timing)? else {
+    let Some((mut socket, mut finish_now)) =
+        connect_in_time(keyterms, commands, timing, &mut light)?
+    else {
         return Ok("cancelled while connecting");
     };
-    // Loupe's gem is blue from here, while words are heard, until fn is
-    // released; dropping the light on any way out turns it off.
-    let mut light = light::Light::new(post_to_loupe);
-    if !finish_now {
-        light.listening(Instant::now());
-    }
     log_first_buffer(&mut first_buffer_logged);
     set_read_timeout(&socket, POLL)?;
     socket.send(Message::text(KEEP_ALIVE))?;
@@ -495,11 +499,14 @@ fn downmix<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32) -> V
 /// Keychain read, DNS, TCP, TLS, the handshake, the read again after a 401)
 /// is bounded by CONNECT_TIMEOUT, while fn up and cancel are still heard.
 /// None: cancelled meanwhile. The flag: fn was released meanwhile. A
-/// connection that comes too late is dropped by its thread.
+/// connection that comes too late is dropped by its thread. The light, on
+/// since the fn press, is refreshed while fn is held and put out at its
+/// release.
 fn connect_in_time(
     keyterms: &[String],
     commands: &Receiver<Command>,
     timing: &Timing,
+    light: &mut light::Light<impl FnMut(light::State)>,
 ) -> anyhow::Result<Option<(Socket, bool)>> {
     let (result_tx, result) = channel();
     let keyterms = keyterms.to_vec();
@@ -515,7 +522,11 @@ fn connect_in_time(
     loop {
         match commands.try_recv() {
             Ok(Command::Cancel) | Err(TryRecvError::Disconnected) => return Ok(None),
-            Ok(Command::Finish) => finished = true,
+            Ok(Command::Finish) => {
+                finished = true;
+                light.stopped();
+            }
+            Err(TryRecvError::Empty) if !finished => light.listening(Instant::now()),
             Err(TryRecvError::Empty) => {}
         }
         match result.recv_timeout(POLL) {
