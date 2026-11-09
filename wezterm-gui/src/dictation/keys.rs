@@ -1,7 +1,7 @@
 //! The parts of fn dictation in every app that need no event tap, window or
 //! microphone: the fn key's state from the system's flags-changed events,
-//! where the words go (the pane when Topaz is frontmost, else the frontmost
-//! app), and how an edit (typing.rs) becomes the keyboard events posted to
+//! where the words go (the pane when Topaz has the keyboard, else the app
+//! that has it), and how an edit (typing.rs) becomes the keyboard events posted to
 //! another app. Plain std, so these tests also run on their own:
 //! `rustc --edition 2021 --test keys.rs && ./keys`.
 //!
@@ -40,25 +40,59 @@ pub fn function_key_after(was_down: bool, key_code: u16, flags: u64) -> bool {
     }
 }
 
+/// Who has the keyboard at fn down, from three readings. The frontmost
+/// app is not enough: a menu bar app's panel (Tot's, 2026-11-08) takes the
+/// keyboard without its app coming to the front, and the app in front, Topaz
+/// say, is not told (its window stays key in its own eyes, so wezterm's
+/// window focus stays set too).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Focus {
+    /// The process the fn event itself was sent to (kCGEventTargetUnixProcessID,
+    /// set where the system has routed it, the annotated session tap): the
+    /// process that receives keystrokes, a panel's included. None when unset.
+    pub event_target: Option<i32>,
+    /// The system-wide focused application (Accessibility), when Topaz is
+    /// trusted.
+    pub focused_app: Option<i32>,
+    /// NSWorkspace's frontmost application.
+    pub frontmost: Option<i32>,
+}
+
+impl Focus {
+    /// The process that has the keyboard: the fn event's target when the
+    /// system set it, else the focused application, else the frontmost.
+    pub fn owner(&self) -> Option<i32> {
+        self.event_target.or(self.focused_app).or(self.frontmost)
+    }
+
+    /// The reading that can be taken again later, without an event: what
+    /// AppSink compares at each edit with the same reading at fn down.
+    pub fn later(&self) -> Option<i32> {
+        self.focused_app.or(self.frontmost)
+    }
+}
+
 /// Where a hold of fn sends its words, decided at fn down.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
-    /// Topaz is frontmost: its focused window's active pane, through the mux.
+    /// Topaz has the keyboard: its focused window's active pane, through the mux.
     Pane,
-    /// Another app is frontmost, the one with this process id: keyboard events.
+    /// Another app has the keyboard, the one with this process id: keyboard
+    /// events.
     App(i32),
-    /// Another app is frontmost and secure input is on (a password field):
-    /// nothing is typed, and a notice says why.
+    /// Another app has the keyboard and secure input is on (a password
+    /// field): nothing is typed, and a notice says why.
     SecureInput,
-    /// No app is frontmost: nothing.
+    /// No app has the keyboard: nothing.
     Nowhere,
 }
 
-/// The target for fn down, given the frontmost app's process id, Topaz's own
-/// and whether secure input is on. Secure input does not stop the pane:
-/// typing there goes through the mux, not keyboard events.
-pub fn target_for(frontmost: Option<i32>, own: i32, secure_input: bool) -> Target {
-    match frontmost {
+/// The target for fn down, given the process that has the keyboard
+/// (`Focus::owner`), Topaz's own and whether secure input is on. Secure input
+/// does not stop the pane: typing there goes through the mux, not keyboard
+/// events.
+pub fn target_for(owner: Option<i32>, own: i32, secure_input: bool) -> Target {
+    match owner {
         Some(pid) if pid == own => Target::Pane,
         Some(_) if secure_input => Target::SecureInput,
         Some(pid) => Target::App(pid),
@@ -109,8 +143,8 @@ pub fn key_actions(backspaces: usize, text: &str) -> Vec<KeyAction> {
 /// What the system offers the app sink: posting events, and the checks made
 /// before each edit. Mocked in the tests.
 pub trait Poster {
-    /// The frontmost app's process id.
-    fn frontmost(&self) -> Option<i32>;
+    /// Who has the keyboard now, read as `Focus::later` reads it.
+    fn focus(&self) -> Option<i32>;
     /// Whether secure input is on (IsSecureEventInputEnabled).
     fn secure_input(&self) -> bool;
     fn post(&mut self, action: &KeyAction);
@@ -124,26 +158,35 @@ pub enum Applied {
     Cancelled,
     /// Secure input came on (a password field took focus): nothing posted.
     SecureInput,
-    /// Another app is frontmost now: nothing posted, so no backspace lands
-    /// in an app whose text the dictation never typed.
+    /// The keyboard moved since fn down: nothing posted, so no backspace
+    /// lands in an app whose text the dictation never typed.
     FocusMoved,
 }
 
-/// The app sink: the frontmost app at fn down, typed into with `P`.
+/// The app sink: the app that had the keyboard at fn down, typed into with
+/// `P`. Events posted go wherever the keyboard is, so the sink stops when it
+/// moves: `focus_at_press` is `Focus::later` at fn down, and each edit
+/// compares the same reading now. Comparing a reading with itself, not with
+/// the fn event's target, keeps a panel that one reading cannot see (the
+/// frontmost app is Topaz while Tot's panel has the keyboard) from stopping
+/// the sink at its first edit, while a real switch still changes it.
 pub struct AppSink<P: Poster> {
-    pid: i32,
+    focus_at_press: Option<i32>,
     poster: P,
 }
 
 impl<P: Poster> AppSink<P> {
-    pub fn new(pid: i32, poster: P) -> Self {
-        Self { pid, poster }
+    pub fn new(focus_at_press: Option<i32>, poster: P) -> Self {
+        Self {
+            focus_at_press,
+            poster,
+        }
     }
 
     /// Post the events for an edit, unless `cancelled()` says the session
-    /// was cancelled, secure input is on, or the app at fn down is no longer
-    /// frontmost; all three are checked before any event of the edit, so an
-    /// edit is posted whole or not at all.
+    /// was cancelled, secure input is on, or the keyboard has moved since fn
+    /// down; all three are checked before any event of the edit, so an edit
+    /// is posted whole or not at all.
     pub fn apply(
         &mut self,
         backspaces: usize,
@@ -156,7 +199,7 @@ impl<P: Poster> AppSink<P> {
         if self.poster.secure_input() {
             return Applied::SecureInput;
         }
-        if self.poster.frontmost() != Some(self.pid) {
+        if self.poster.focus() != self.focus_at_press {
             return Applied::FocusMoved;
         }
         for action in key_actions(backspaces, text) {
@@ -210,10 +253,58 @@ mod tests {
     }
 
     #[test]
-    fn the_target_follows_the_frontmost_app() {
+    fn the_target_follows_the_keyboard() {
         assert_eq!(target_for(Some(7), 7, false), Target::Pane);
         assert_eq!(target_for(Some(9), 7, false), Target::App(9));
         assert_eq!(target_for(None, 7, false), Target::Nowhere);
+    }
+
+    /// Topaz (7) is frontmost and Tot (9), a menu bar app, has the keyboard
+    /// through a panel that never brought it to the front.
+    #[test]
+    fn a_panel_that_has_the_keyboard_gets_the_words_though_topaz_is_frontmost() {
+        let untrusted = Focus {
+            event_target: Some(9),
+            focused_app: None,
+            frontmost: Some(7),
+        };
+        assert_eq!(untrusted.owner(), Some(9));
+        assert_eq!(target_for(untrusted.owner(), 7, false), Target::App(9));
+        let trusted = Focus {
+            focused_app: Some(9),
+            ..untrusted
+        };
+        assert_eq!(target_for(trusted.owner(), 7, false), Target::App(9));
+        // The event's target unset: the focused application decides.
+        let no_target = Focus {
+            event_target: None,
+            ..trusted
+        };
+        assert_eq!(target_for(no_target.owner(), 7, false), Target::App(9));
+        // Ben in Topaz's own window: the pane.
+        let in_topaz = Focus {
+            event_target: Some(7),
+            focused_app: Some(7),
+            frontmost: Some(7),
+        };
+        assert_eq!(target_for(in_topaz.owner(), 7, false), Target::Pane);
+        // Nothing read at all.
+        assert_eq!(Focus::default().owner(), None);
+    }
+
+    #[test]
+    fn the_later_reading_leaves_out_the_event() {
+        let focus = Focus {
+            event_target: Some(9),
+            focused_app: None,
+            frontmost: Some(7),
+        };
+        assert_eq!(focus.later(), Some(7));
+        let focus = Focus {
+            focused_app: Some(9),
+            ..focus
+        };
+        assert_eq!(focus.later(), Some(9));
     }
 
     #[test]
@@ -287,14 +378,14 @@ mod tests {
     #[derive(Default)]
     struct Field {
         text: String,
-        frontmost: Option<i32>,
+        focus: Option<i32>,
         secure: bool,
         posted: usize,
     }
 
     impl Poster for Field {
-        fn frontmost(&self) -> Option<i32> {
-            self.frontmost
+        fn focus(&self) -> Option<i32> {
+            self.focus
         }
         fn secure_input(&self) -> bool {
             self.secure
@@ -316,7 +407,7 @@ mod tests {
     fn field(pid: i32, text: &str) -> Field {
         Field {
             text: text.to_string(),
-            frontmost: Some(pid),
+            focus: Some(pid),
             ..Default::default()
         }
     }
@@ -346,7 +437,7 @@ mod tests {
             ("TranscriptText", Some("And a café.")),
             ("TranscriptEndpoint", None),
         ];
-        let mut sink = AppSink::new(9, field(9, BEFORE));
+        let mut sink = AppSink::new(Some(9), field(9, BEFORE));
         let mut transcript = Transcript::default();
         let mut typed = String::new();
         for (kind, data) in messages {
@@ -374,7 +465,7 @@ mod tests {
     fn secure_input_skips_the_edit() {
         let mut f = field(9, "pass");
         f.secure = true;
-        let mut sink = AppSink::new(9, f);
+        let mut sink = AppSink::new(Some(9), f);
         assert_eq!(sink.apply(1, "word", || false), Applied::SecureInput);
         assert_eq!(sink.poster().posted, 0);
         assert_eq!(sink.poster().text, "pass");
@@ -382,11 +473,11 @@ mod tests {
 
     #[test]
     fn a_moved_focus_or_a_cancel_skips_the_edit() {
-        let mut sink = AppSink::new(9, field(4, "other app's text"));
+        let mut sink = AppSink::new(Some(9), field(4, "other app's text"));
         assert_eq!(sink.apply(3, "word", || false), Applied::FocusMoved);
         assert_eq!(sink.poster().posted, 0);
 
-        let mut sink = AppSink::new(9, field(9, "mine"));
+        let mut sink = AppSink::new(Some(9), field(9, "mine"));
         let checked = Cell::new(false);
         let cancelled = || {
             checked.set(true);
@@ -398,8 +489,24 @@ mod tests {
         assert_eq!(sink.poster().text, "mine");
 
         let mut f = field(9, "");
-        f.frontmost = None;
-        let mut sink = AppSink::new(9, f);
+        f.focus = None;
+        let mut sink = AppSink::new(Some(9), f);
         assert_eq!(sink.apply(0, "x", || false), Applied::FocusMoved);
+    }
+
+    /// Tot's panel has the keyboard; the later reading, untrusted, sees only
+    /// the frontmost app, Topaz (7). It stays 7 while Ben dictates, so the
+    /// words land; a real switch (Ben clicks into Mail, 4) changes it and
+    /// stops the sink before its next edit.
+    #[test]
+    fn the_guard_compares_like_with_like_under_a_panel() {
+        let mut f = field(7, "Tot note: ");
+        f.focus = Some(7);
+        let mut sink = AppSink::new(Some(7), f);
+        assert_eq!(sink.apply(0, "milk", || false), Applied::Typed);
+        assert_eq!(sink.poster().text, "Tot note: milk");
+        sink.poster.focus = Some(4);
+        assert_eq!(sink.apply(4, "eggs", || false), Applied::FocusMoved);
+        assert_eq!(sink.poster().text, "Tot note: milk");
     }
 }

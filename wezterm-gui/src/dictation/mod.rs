@@ -1,7 +1,7 @@
 //! Hold fn to dictate (Topaz, macOS; config.fn_dictation), in any app. While
 //! fn is held the microphone streams to Anthropic's speech to text, the
 //! service behind Claude Code's /voice, and the words are typed as they
-//! arrive into what was frontmost at fn down: Topaz's active pane, through
+//! arrive into what had the keyboard at fn down: Topaz's active pane, through
 //! the mux, or another app, as keyboard events (everywhere.rs, keys.rs). Both
 //! sinks take the same edits: what was typed is turned into the running text
 //! by `edit_between`. On release the stream closes at once and only the tail
@@ -83,7 +83,9 @@ const KEYCHAIN_SERVICE: &str = "Claude Code-credentials";
 const FALLBACK_CLAUDE_VERSION: &str = "2.1.319";
 
 /// Start a session for one hold of fn, pressed at `pressed`, typing into
-/// `target` (Target::Pane or Target::App; everywhere.rs decides). When
+/// `target` (Target::Pane or Target::App; everywhere.rs decides), where
+/// `focus_at_press` is the reading the app sink compares at each edit
+/// (keys.rs `Focus::later`). When
 /// Claude Code's sign in is missing, expired or refused, which Ben must fix
 /// himself, the sink shows a notice.
 ///
@@ -92,17 +94,16 @@ const FALLBACK_CLAUDE_VERSION: &str = "2.1.319";
 /// waits on the GUI thread, up to a second when it is busy). The light then
 /// moves into the session, so every way the session ends, no focused pane
 /// included, drops it and turns the gem back.
-pub fn start(target: Target, keyterms: Vec<String>, pressed: Instant) -> Session {
-    let light = lit_at_press(pressed, {
-        let timing = Timing::new(pressed);
-        move |state: light::State| {
-            post_to_loupe(state);
-            timing.log(format_args!("told Loupe {}", state.as_str()));
-        }
-    });
+pub fn start(
+    target: Target,
+    focus_at_press: Option<i32>,
+    keyterms: Vec<String>,
+    pressed: Instant,
+) -> Session {
+    let light = loupe_light(pressed);
     Session::spawn(pressed, move |commands, shared| {
         let mut light = light;
-        let Some(mut sink) = Sink::for_target(target) else {
+        let Some(mut sink) = Sink::for_target(target, focus_at_press) else {
             shared
                 .timing
                 .log(format_args!("session end (no focused pane)"));
@@ -119,6 +120,38 @@ pub fn start(target: Target, keyterms: Vec<String>, pressed: Instant) -> Session
             }
         }
     })
+}
+
+/// Loupe's light for a press, posting "listening" now.
+fn loupe_light(pressed: Instant) -> light::Light<impl FnMut(light::State) + Send> {
+    let timing = Timing::new(pressed);
+    lit_at_press(pressed, move |state: light::State| {
+        post_to_loupe(state);
+        timing.log(format_args!("told Loupe {}", state.as_str()));
+    })
+}
+
+/// How long the gem stays blue for a press that starts no session.
+const FLASH: Duration = Duration::from_millis(300);
+
+/// A press heard that starts no session (Accessibility missing, secure
+/// input, no app with the keyboard): the gem turns blue at the press, as for
+/// any press, and back after FLASH, so Ben sees that fn was heard.
+pub fn flash(pressed: Instant) {
+    put_out_after(loupe_light(pressed), FLASH);
+}
+
+/// Drop `light`, which is on, after `wait`, off the calling thread.
+fn put_out_after<P: FnMut(light::State) + Send + 'static>(light: light::Light<P>, wait: Duration) {
+    let spawned = std::thread::Builder::new()
+        .name("fn-dictation-flash".to_string())
+        .spawn(move || {
+            std::thread::sleep(wait);
+            drop(light);
+        });
+    if let Err(err) = spawned {
+        log::error!("fn dictation: cannot start the flash's thread: {err:#}");
+    }
 }
 
 /// A light posting "listening" now, at the press.
@@ -139,17 +172,20 @@ enum Sink {
         pane_id: PaneId,
         window: ::window::Window,
     },
-    /// The app frontmost at fn down, typed into with keyboard events from
-    /// the session's thread.
+    /// The app that had the keyboard at fn down, typed into with keyboard
+    /// events from the session's thread.
     App(AppSink<everywhere::EventPoster>),
 }
 
 impl Sink {
-    fn for_target(target: Target) -> Option<Self> {
+    fn for_target(target: Target, focus_at_press: Option<i32>) -> Option<Self> {
         match target {
             Target::Pane => crate::termwindow::focused_pane(FOCUSED_PANE_WAIT)
                 .map(|(pane_id, window)| Self::Pane { pane_id, window }),
-            Target::App(pid) => Some(Self::App(AppSink::new(pid, everywhere::EventPoster::new()))),
+            Target::App(_) => Some(Self::App(AppSink::new(
+                focus_at_press,
+                everywhere::EventPoster::new(),
+            ))),
             Target::SecureInput | Target::Nowhere => None,
         }
     }
@@ -168,7 +204,7 @@ impl Sink {
     /// unless the session was cancelled by then. Into the pane, the flag is
     /// checked on the GUI thread, where keys are handled, so no edit lands
     /// after the key that cancelled. Into another app it is checked just
-    /// before posting, with secure input and the frontmost app: Some(how the
+    /// before posting, with secure input and who has the keyboard: Some(how the
     /// session ends) when typing must stop.
     fn type_into(
         &mut self,
@@ -214,7 +250,7 @@ impl Sink {
                     }
                     Applied::FocusMoved => {
                         cancelled.store(true, Ordering::SeqCst);
-                        Some("another app came to the front")
+                        Some("the keyboard moved to another app")
                     }
                 }
             }
@@ -871,6 +907,42 @@ mod tests {
         assert_eq!(
             *posts.lock().unwrap(),
             [light::State::Listening, light::State::Stopped]
+        );
+    }
+
+    #[test]
+    fn a_press_that_starts_no_session_flashes_the_light() {
+        use std::sync::Mutex;
+        let posts = Arc::new(Mutex::new(vec![]));
+        let sink = Arc::clone(&posts);
+        let pressed = Instant::now();
+        let light = lit_at_press(pressed, move |state| {
+            sink.lock().unwrap().push((state, pressed.elapsed()))
+        });
+        put_out_after(light, FLASH);
+        // Blue at once, on the pressing thread.
+        let states = || {
+            posts
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|p| p.0)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(states(), [light::State::Listening]);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while posts.lock().unwrap().len() < 2 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(states(), [light::State::Listening, light::State::Stopped]);
+        let off_at = posts.lock().unwrap()[1].1;
+        assert!(
+            off_at >= FLASH,
+            "off after the flash, not before ({off_at:?})"
+        );
+        assert!(
+            FLASH < light::REFRESH_EVERY,
+            "off before any refresh is due"
         );
     }
 

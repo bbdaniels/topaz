@@ -1,6 +1,6 @@
 //! fn dictation, the windows' side (Topaz, macOS; the session and the event
-//! tap that hears fn in every app are crate::dictation). When Topaz is
-//! frontmost at fn down, the words go to the focused window's active pane,
+//! tap that hears fn in every app are crate::dictation). When Topaz has the
+//! keyboard at fn down, the words go to the focused window's active pane,
 //! which the session asks for here; any key in a window, or a window losing
 //! focus, cancels, so nothing is typed after Ben's own keys. Nothing happens
 //! on other systems.

@@ -1,11 +1,15 @@
 //! fn dictation in every app (Ben, 2026-11-08: "start dictation everywhere
 //! now too"). One listen-only event tap, on a thread of its own with its own
-//! run loop, hears fn in whatever app is frontmost, so the Topaz window's
+//! run loop, hears fn in whatever app has the keyboard, so the Topaz window's
 //! own fn detector is gone and fn is heard once. Listen-only, it never holds
 //! a keystroke back, and on its own thread a busy GUI thread cannot slow it.
-//! At fn down the frontmost app decides the sink (keys.rs, `target_for`):
-//! Topaz's focused pane through the mux, or keyboard events posted to the
-//! other app. One session runs at a time, process wide.
+//! At fn down the process that has the keyboard decides the sink (keys.rs,
+//! `Focus` and `target_for`): Topaz's focused pane through the mux, or
+//! keyboard events posted to the other app. Not the frontmost app: a menu bar
+//! app's panel (Tot's) has the keyboard while Topaz stays in front, so the
+//! tap sits where the system has already routed each event (the annotated
+//! session tap) and reads the fn event's own target. One session runs at a
+//! time, process wide.
 //!
 //! The tap also hears every key and mouse button pressed from fn down until
 //! the final text is typed; any of them cancels the session, as a key in
@@ -13,10 +17,11 @@
 //! where a click moved the caret. The events Topaz posts carry
 //! `POSTED_BY_TOPAZ` in their source user data and are not taken for Ben's.
 //!
-//! Permissions (each asked for once, with a stable signature): the tap needs
-//! Input Monitoring, asked for when the tap starts (Topaz's launch with
-//! config.fn_dictation on); posting needs Accessibility, asked for at the
-//! first hold of fn in another app.
+//! Permissions (with a stable signature): the tap needs Input Monitoring,
+//! asked for when the tap starts (Topaz's launch with config.fn_dictation
+//! on); posting needs Accessibility, read afresh at every press
+//! (AXIsProcessTrusted, never kept) and asked for at a hold of fn in another
+//! app while it is missing.
 
 use super::control::Dictation;
 use super::keys::{self, KeyAction, Poster, Target};
@@ -76,11 +81,12 @@ type CFStringRef = *const c_void;
 type CGEventTapCallBack = extern "C" fn(*mut c_void, u32, CGEventRef, *mut c_void) -> CGEventRef;
 
 const K_CG_HID_EVENT_TAP: u32 = 0;
-const K_CG_SESSION_EVENT_TAP: u32 = 1;
+const K_CG_ANNOTATED_SESSION_EVENT_TAP: u32 = 2;
 const K_CG_HEAD_INSERT_EVENT_TAP: u32 = 0;
 const K_CG_EVENT_TAP_OPTION_LISTEN_ONLY: u32 = 1;
 const K_CG_EVENT_SOURCE_STATE_PRIVATE: i32 = -1;
 const K_CG_KEYBOARD_EVENT_KEYCODE: u32 = 9;
+const K_CG_EVENT_TARGET_UNIX_PROCESS_ID: u32 = 40;
 const K_CG_EVENT_SOURCE_USER_DATA: u32 = 42;
 
 const LEFT_MOUSE_DOWN: u32 = 1;
@@ -139,6 +145,24 @@ extern "C" {
     fn IsSecureEventInputEnabled() -> u8;
 }
 
+type AXUIElementRef = *const c_void;
+const AX_SUCCESS: i32 = 0;
+/// How long an Accessibility query may wait on the process it asks.
+const AX_TIMEOUT_SECONDS: f32 = 0.25;
+
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrusted() -> u8;
+    fn AXUIElementCreateSystemWide() -> AXUIElementRef;
+    fn AXUIElementSetMessagingTimeout(element: AXUIElementRef, seconds: f32) -> i32;
+    fn AXUIElementCopyAttributeValue(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        value: *mut *const c_void,
+    ) -> i32;
+    fn AXUIElementGetPid(element: AXUIElementRef, pid: *mut i32) -> i32;
+}
+
 fn mask(kind: u32) -> u64 {
     1 << kind
 }
@@ -175,7 +199,7 @@ fn run_tap() {
     let port = loop {
         let port = unsafe {
             CGEventTapCreate(
-                K_CG_SESSION_EVENT_TAP,
+                K_CG_ANNOTATED_SESSION_EVENT_TAP,
                 K_CG_HEAD_INSERT_EVENT_TAP,
                 K_CG_EVENT_TAP_OPTION_LISTEN_ONLY,
                 events,
@@ -239,7 +263,10 @@ fn on_event_inner(state: &mut TapState, kind: u32, event: CGEventRef) {
             if down != state.fn_down {
                 state.fn_down = down;
                 if down {
-                    fn_pressed(Instant::now());
+                    let target = unsafe {
+                        CGEventGetIntegerValueField(event, K_CG_EVENT_TARGET_UNIX_PROCESS_ID)
+                    };
+                    fn_pressed(Instant::now(), (target > 0).then_some(target as i32));
                 } else {
                     dictation().fn_up();
                 }
@@ -255,26 +282,44 @@ pub const SECURE_INPUT_NOTICE: &str = "fn dictation types nothing while a passwo
 const NO_ACCESSIBILITY_NOTICE: &str = "fn dictation in other apps needs Accessibility \
      for Topaz: System Settings, Privacy & Security, Accessibility. Then hold fn again.";
 
-/// fn went down, at `pressed`, on the tap's thread.
-fn fn_pressed(pressed: Instant) {
+/// fn went down, at `pressed`, on the tap's thread; the system sent its
+/// event to `event_target`.
+fn fn_pressed(pressed: Instant, event_target: Option<i32>) {
     let config = config::configuration();
     if !config.fn_dictation {
         return;
     }
     log::info!("fn dictation timing: +0 ms fn press received");
-    let target = keys::target_for(frontmost_pid(), std::process::id() as i32, secure_input());
+    let (focus, trusted) = read_focus(event_target);
+    let own = std::process::id() as i32;
+    let target = keys::target_for(focus.owner(), own, secure_input());
+    log::info!(
+        "fn dictation: at the press, {target:?} (Topaz is {own}; the fn event went to \
+         {:?}, the focused application is {:?}, the frontmost {:?}; \
+         AXIsProcessTrusted {trusted}, CGPreflightPostEventAccess {})",
+        focus.event_target,
+        focus.focused_app,
+        focus.frontmost,
+        unsafe { CGPreflightPostEventAccess() }
+    );
     match target {
         Target::Nowhere => {
-            log::info!("fn dictation: no app is frontmost");
+            log::info!("fn dictation: no app has the keyboard; nothing typed");
+            super::flash(pressed);
             return;
         }
         Target::SecureInput => {
             log::info!("fn dictation: secure input is on; nothing typed");
+            super::flash(pressed);
             notice(SECURE_INPUT_NOTICE.to_string());
             return;
         }
-        Target::App(_) if !unsafe { CGPreflightPostEventAccess() } => {
-            log::warn!("fn dictation: Topaz has no Accessibility permission; asking");
+        Target::App(pid) if !trusted => {
+            log::warn!(
+                "fn dictation: Topaz has no Accessibility permission at this press \
+                 (AXIsProcessTrusted false), so nothing can be typed into {pid}; asking"
+            );
+            super::flash(pressed);
             // The request may show a dialog; it is made off the tap's thread.
             std::thread::spawn(|| unsafe {
                 CGRequestPostEventAccess();
@@ -285,7 +330,49 @@ fn fn_pressed(pressed: Instant) {
         Target::Pane | Target::App(_) => {}
     }
     let keyterms = config.fn_dictation_keyterms.clone();
-    dictation().fn_down(move || Some(super::start(target, keyterms, pressed)));
+    let focus_at_press = focus.later();
+    dictation().fn_down(move || Some(super::start(target, focus_at_press, keyterms, pressed)));
+}
+
+/// Who has the keyboard, read now (keys.rs `Focus`), and whether Topaz has
+/// Accessibility, read afresh each time: the focused application is asked
+/// for only when it does.
+fn read_focus(event_target: Option<i32>) -> (keys::Focus, bool) {
+    let trusted = unsafe { AXIsProcessTrusted() != 0 };
+    let focus = keys::Focus {
+        event_target,
+        focused_app: if trusted { focused_app_pid() } else { None },
+        frontmost: frontmost_pid(),
+    };
+    (focus, trusted)
+}
+
+/// The system-wide focused application's process id (Accessibility): the
+/// process that has the keyboard, a panel's included.
+fn focused_app_pid() -> Option<i32> {
+    use objc2_foundation::NSString;
+    let attribute = NSString::from_str("AXFocusedApplication");
+    unsafe {
+        let system = AXUIElementCreateSystemWide();
+        if system.is_null() {
+            return None;
+        }
+        AXUIElementSetMessagingTimeout(system, AX_TIMEOUT_SECONDS);
+        let mut app: *const c_void = std::ptr::null();
+        let copied = AXUIElementCopyAttributeValue(
+            system,
+            (&*attribute as *const NSString).cast(),
+            &mut app,
+        );
+        CFRelease(system);
+        if copied != AX_SUCCESS || app.is_null() {
+            return None;
+        }
+        let mut pid = 0;
+        let got = AXUIElementGetPid(app, &mut pid);
+        CFRelease(app);
+        (got == AX_SUCCESS && pid > 0).then_some(pid)
+    }
 }
 
 /// The frontmost app's process id.
@@ -313,7 +400,7 @@ pub fn secure_input() -> bool {
     unsafe { IsSecureEventInputEnabled() != 0 }
 }
 
-/// A brief notice when Topaz is not frontmost: a notification that closes
+/// A brief notice when the words would go to another app: a notification that closes
 /// itself.
 pub fn notice(message: String) {
     wezterm_toast_notification::show(wezterm_toast_notification::ToastNotification {
@@ -324,9 +411,9 @@ pub fn notice(message: String) {
     });
 }
 
-/// Keyboard events into the frontmost app, from a private event source, so
-/// that fn, still held, adds no modifier; their flags are set empty all the
-/// same, or a Backspace with fn's flag would delete forward.
+/// Keyboard events into the app that has the keyboard, from a private event
+/// source, so that fn, still held, adds no modifier; their flags are set
+/// empty all the same, or a Backspace with fn's flag would delete forward.
 pub struct EventPoster {
     source: CGEventSourceRef,
 }
@@ -365,8 +452,8 @@ impl Drop for EventPoster {
 }
 
 impl Poster for EventPoster {
-    fn frontmost(&self) -> Option<i32> {
-        frontmost_pid()
+    fn focus(&self) -> Option<i32> {
+        read_focus(None).0.later()
     }
 
     fn secure_input(&self) -> bool {
