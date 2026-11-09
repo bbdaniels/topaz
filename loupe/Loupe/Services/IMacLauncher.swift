@@ -214,6 +214,19 @@ enum IMacLauncher {
         return answer["error"] as? String ?? "the gate refused"
     }
 
+    /// How long a session may stay listed after the gate's `end` said it had
+    /// stopped. 2026-11-08: a daemon background session ended with SIGTERM was
+    /// started again within about 10 s, and its row stayed struck through.
+    static let stopDeadline: TimeInterval = 15
+
+    /// Why a stop failed, or nil when it worked: the gate's refusal, or a
+    /// session still listed `stopDeadline` after the gate said it stopped.
+    static func stopFailure(refused: String?, stillListed: Bool) -> String? {
+        if let refused { return refused }
+        guard stillListed else { return nil }
+        return "the gate said it stopped, but it was still running \(Int(stopDeadline)) seconds later"
+    }
+
     static func adoptCommand(name: String, sessionId: String) -> String {
         ([gatePath] + ["adopt", name, sessionId].map(shellQuote)).joined(separator: " ")
     }

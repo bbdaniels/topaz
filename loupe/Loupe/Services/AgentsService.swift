@@ -558,19 +558,6 @@ final class AgentsService: ObservableObject {
         return IMacLauncher.endFailure(status: process.terminationStatus, stdout: data)
     }
 
-    /// How long a session may stay listed after the gate's `end` said it had
-    /// stopped. 2026-11-08: a daemon background session ended with SIGTERM was
-    /// started again within about 10 s, and its row stayed struck through.
-    nonisolated static let stopDeadline: TimeInterval = 15
-
-    /// Why a stop failed, or nil when it worked: the gate's refusal, or a
-    /// session still listed `stopDeadline` after the gate said it stopped.
-    nonisolated static func stopFailure(refused: String?, stillListed: Bool) -> String? {
-        if let refused { return refused }
-        guard stillListed else { return nil }
-        return "the gate said it stopped, but it was still running \(Int(stopDeadline)) seconds later"
-    }
-
     /// THE way the HUD puts Ben in a live session (Ben, 2026-11-03, never
     /// claude.ai when there is a terminal; 2026-11-07, one WezTerm window, a
     /// tab per session). Already open in a tab (found by a scan made at the
