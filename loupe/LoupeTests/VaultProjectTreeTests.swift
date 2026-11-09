@@ -326,21 +326,21 @@ final class VaultWatchTests: XCTestCase {
             VaultProject.parse(folder: URL(fileURLWithPath: "/vault/" + name),
                                tasksContent: "---\nstatus: active\n\(front)---\n## Active\n\(body)")
         }
-        let wezterm = "cwds:\n  - /Users/b/Projects/wezterm\n"
+        let topaz = "cwds:\n  - /Users/b/Projects/topaz\n"
         let before = VaultProject.filingClaims([project("Tech Setup", "")])
         // A new project that claims a directory (Topaz, 2026-11-08) changes it.
-        let added = VaultProject.filingClaims([project("Tech Setup", ""), project("Topaz", wezterm)])
+        let added = VaultProject.filingClaims([project("Tech Setup", ""), project("Topaz", topaz)])
         XCTAssertNotEqual(before, added)
         // A folder renamed or merged away (ClaudeHUD into Topaz) changes it.
-        XCTAssertNotEqual(VaultProject.filingClaims([project("ClaudeHUD", wezterm)]),
-                          VaultProject.filingClaims([project("Topaz", wezterm)]))
+        XCTAssertNotEqual(VaultProject.filingClaims([project("ClaudeHUD", topaz)]),
+                          VaultProject.filingClaims([project("Topaz", topaz)]))
         // An edited repo: claim changes it.
         XCTAssertNotEqual(added, VaultProject.filingClaims([
-            project("Tech Setup", ""), project("Topaz", wezterm + "repo:\n  - github.com/bbdaniels/wezterm\n")]))
+            project("Tech Setup", ""), project("Topaz", topaz + "repo:\n  - github.com/bbdaniels/topaz\n")]))
         // A task ticked or added does not: only the claims are read.
         XCTAssertEqual(added, VaultProject.filingClaims([
-            project("Tech Setup", "", "- [ ] New task\n"), project("Topaz", wezterm, "- [x] Done\n")]))
-        XCTAssertEqual(project("Topaz", wezterm).claims.cwds, ["/Users/b/Projects/wezterm"])
+            project("Tech Setup", "", "- [ ] New task\n"), project("Topaz", topaz, "- [x] Done\n")]))
+        XCTAssertEqual(project("Topaz", topaz).claims.cwds, ["/Users/b/Projects/topaz"])
     }
 
     // MARK: Daily note from the scan

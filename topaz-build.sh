@@ -42,7 +42,7 @@
 # Signing reads the keychain, which an ssh login cannot, so run this in a
 # window of the gate's tmux, for example:
 #   /opt/homebrew/bin/tmux -L pi-gate new-window -d -t pi-gate-keep \
-#     '~/Projects/wezterm/topaz-build.sh --stage'
+#     '~/Projects/topaz/topaz-build.sh --stage'
 # Install from outside Topaz (quitting it ends the shells in its tabs). The
 # config goes in after the app because config_builder() rejects keys an
 # older build does not know. Config: bbdaniels/personal, deploy/mac/wezterm.
