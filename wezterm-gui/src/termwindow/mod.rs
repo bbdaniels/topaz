@@ -1134,6 +1134,10 @@ impl TermWindow {
             TermWindowNotif::InvalidateShapeCache => {
                 self.shape_generation += 1;
                 self.shape_cache.borrow_mut().clear();
+                // A fallback font found for a glyph the title font lacks: the
+                // cached fancy tab bar still holds the last-resort box drawn
+                // while the search ran, so rebuild it too.
+                self.invalidate_fancy_tab_bar();
                 self.invalidate_modal();
                 window.invalidate();
             }
