@@ -13,6 +13,18 @@ impl super::TermWindow {
         crate::dictation::everywhere::cancel();
     }
 
+    /// The window came to the front: open the speech socket now, so that a
+    /// hold of fn in the next READY_FOR starts without the handshake.
+    pub fn prepare_dictation(&mut self) {
+        #[cfg(target_os = "macos")]
+        {
+            let config = config::configuration();
+            if config.fn_dictation {
+                crate::dictation::prepare(config.fn_dictation_keyterms.clone());
+            }
+        }
+    }
+
     /// A brief notice over the pane, for a problem only Ben can fix (Claude
     /// Code's sign in); it closes itself, or on any key. A pane that already
     /// shows an overlay, such as copy mode, keeps it, and the log has the

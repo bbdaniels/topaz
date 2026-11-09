@@ -539,6 +539,8 @@ impl TermWindow {
             // fn's release would go to the newly focused app, and what is
             // typed would land unseen: type nothing more.
             self.cancel_dictation();
+        } else {
+            self.prepare_dictation();
         }
         self.focused = if focused { Some(Instant::now()) } else { None };
         self.quad_generation += 1;

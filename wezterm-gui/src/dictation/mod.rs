@@ -36,7 +36,7 @@ use std::io::ErrorKind;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::HeaderValue;
@@ -103,22 +103,37 @@ pub fn start(
     let light = loupe_light(pressed);
     Session::spawn(pressed, move |commands, shared| {
         let mut light = light;
+        // The microphone first, then the pane: what Ben says while the GUI
+        // thread names the focused pane (up to FOCUSED_PANE_WAIT) waits in
+        // the capture's channel instead of being lost.
+        let capture = match Capture::start(&shared.timing) {
+            Ok(capture) => capture,
+            Err(err) => {
+                shared.timing.log(format_args!("session end (error)"));
+                log::error!("fn dictation: {err:#}");
+                return;
+            }
+        };
         let Some(mut sink) = Sink::for_target(target, focus_at_press) else {
             shared
                 .timing
                 .log(format_args!("session end (no focused pane)"));
             return;
         };
-        match run(&mut sink, &keyterms, &commands, &shared, &mut light) {
+        shared.timing.log(format_args!("sink ready"));
+        match run(&mut sink, capture, &keyterms, &commands, &shared, &mut light) {
             Ok(end) => shared.timing.log(format_args!("session end ({end})")),
             Err(err) => {
                 shared.timing.log(format_args!("session end (error)"));
                 log::error!("fn dictation: {err:#}");
                 if let Some(refused) = sign_in_refused(&err) {
                     sink.notice(refused.to_string());
+                    return;
                 }
             }
         }
+        // Holds come in runs: the next one finds its socket open.
+        prepare(keyterms);
     })
 }
 
@@ -295,8 +310,31 @@ fn audio_ms(samples: usize) -> usize {
 /// How a session ended, for its timing line.
 type End = &'static str;
 
+/// The microphone, open since the press; its buffers wait in `audio`.
+struct Capture {
+    stream: cpal::Stream,
+    audio: Receiver<Vec<f32>>,
+    input_rate: u32,
+    first_buffer: FirstBuffer,
+}
+
+impl Capture {
+    fn start(timing: &Timing) -> anyhow::Result<Self> {
+        let (audio_tx, audio) = channel::<Vec<f32>>();
+        let first_buffer = Arc::new(OnceLock::new());
+        let (stream, input_rate) = start_capture(audio_tx, Arc::clone(&first_buffer), timing)?;
+        Ok(Self {
+            stream,
+            audio,
+            input_rate,
+            first_buffer,
+        })
+    }
+}
+
 fn run(
     sink: &mut Sink,
+    capture: Capture,
     keyterms: &[String],
     commands: &Receiver<Command>,
     shared: &Shared,
@@ -306,10 +344,14 @@ fn run(
     // Loupe's gem has been blue since the fn press (`start`); it is
     // refreshed while fn is held and put out at its release, and dropping
     // it on any way out (cancel, error, `?`) turns it off.
-    // Capture next, so that audio buffers while the socket opens.
-    let (audio_tx, audio) = channel::<Vec<f32>>();
-    let first_buffer = Arc::new(OnceLock::new());
-    let (stream, input_rate) = start_capture(audio_tx, Arc::clone(&first_buffer), timing)?;
+    // The microphone has run since the press, so audio buffers while the
+    // socket opens.
+    let Capture {
+        stream,
+        audio,
+        input_rate,
+        first_buffer,
+    } = capture;
     let mut stream = Some(stream);
     let mut resampler = Resampler::new(input_rate);
     let mut first_buffer_logged = false;
@@ -647,6 +689,28 @@ fn start_capture(
     Ok((stream, config.sample_rate))
 }
 
+/// Load CoreAudio and find the microphone once, when the tap starts at
+/// launch, without opening a stream (so the microphone indicator stays
+/// off), so that the first press does not pay for it.
+pub fn warm_microphone() {
+    let spawned = std::thread::Builder::new()
+        .name("fn-dictation-warm-mic".to_string())
+        .spawn(|| {
+            let started = Instant::now();
+            let found = cpal::default_host()
+                .default_input_device()
+                .and_then(|device| device.default_input_config().ok())
+                .is_some();
+            log::info!(
+                "fn dictation: microphone looked up ahead in {} ms (found: {found})",
+                started.elapsed().as_millis()
+            );
+        });
+    if let Err(err) = spawned {
+        log::error!("fn dictation: cannot start the microphone's warm up: {err:#}");
+    }
+}
+
 fn downmix<T: Copy>(data: &[T], channels: usize, to_f32: impl Fn(T) -> f32) -> Vec<f32> {
     data.chunks(channels)
         .map(|frame| frame.iter().map(|&s| to_f32(s)).sum::<f32>() / frame.len() as f32)
@@ -666,6 +730,9 @@ fn connect_in_time(
     timing: &Timing,
     light: &mut light::Light<impl FnMut(light::State)>,
 ) -> anyhow::Result<Option<(Socket, bool)>> {
+    if let Some(socket) = take_ready(keyterms, timing) {
+        return Ok(Some((socket, false)));
+    }
     let (result_tx, result) = channel();
     let keyterms = keyterms.to_vec();
     let connect_timing = timing.clone();
@@ -700,6 +767,129 @@ fn connect_in_time(
             }
         }
     }
+}
+
+/// How long a socket opened ahead of a press is kept for one. Topaz
+/// coming to the front, or a dictation ending, opens one; unused, it is
+/// closed after this.
+const READY_FOR: Duration = Duration::from_secs(60);
+
+/// A socket opened ahead of the next press, with the keyterms it was
+/// opened with (they go in its handshake) and when.
+struct Ready {
+    socket: Socket,
+    keyterms: Vec<String>,
+    opened: Instant,
+    last_keep_alive: Instant,
+}
+
+static READY: Mutex<Option<Ready>> = Mutex::new(None);
+/// True while a socket is being opened ahead, so that only one opens.
+static READYING: AtomicBool = AtomicBool::new(false);
+
+fn ready() -> MutexGuard<'static, Option<Ready>> {
+    READY.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Open a socket now for the next press, unless a fresh one is ready or
+/// opening; it is kept alive for READY_FOR, then closed.
+pub fn prepare(keyterms: Vec<String>) {
+    let fresh = ready()
+        .as_ref()
+        .map_or(false, |r| r.keyterms == keyterms && r.opened.elapsed() < READY_FOR);
+    if fresh || READYING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("fn-dictation-ready".to_string())
+        .spawn(move || {
+            let timing = Timing::new(Instant::now());
+            let socket = connect(&keyterms, &timing);
+            READYING.store(false, Ordering::SeqCst);
+            let mut socket = match socket {
+                Ok(socket) => socket,
+                Err(err) => {
+                    log::info!("fn dictation: no socket opened ahead: {err:#}");
+                    return;
+                }
+            };
+            if set_read_timeout(&socket, Duration::from_millis(1)).is_err()
+                || socket.send(Message::text(KEEP_ALIVE)).is_err()
+            {
+                return;
+            }
+            let opened = Instant::now();
+            if let Some(mut old) = ready().replace(Ready {
+                socket,
+                keyterms,
+                opened,
+                last_keep_alive: opened,
+            }) {
+                old.socket.close(None).ok();
+            }
+            keep_ready(opened);
+        });
+    if spawned.is_err() {
+        READYING.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Keep the socket opened at `opened` alive, answering the server's pings
+/// and sending KeepAlive, until a press takes it, another replaces it, the
+/// server closes it or READY_FOR passes.
+fn keep_ready(opened: Instant) {
+    loop {
+        std::thread::sleep(Duration::from_millis(500));
+        let mut slot = ready();
+        let Some(r) = slot.as_mut().filter(|r| r.opened == opened) else {
+            return;
+        };
+        let alive = loop {
+            match r.socket.read() {
+                Ok(Message::Close(_)) => break false,
+                Ok(_) => {}
+                Err(tungstenite::Error::Io(err))
+                    if matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
+                {
+                    break true
+                }
+                Err(_) => break false,
+            }
+        };
+        let expired = r.opened.elapsed() >= READY_FOR;
+        if alive && !expired && r.last_keep_alive.elapsed() >= KEEP_ALIVE_EVERY {
+            if r.socket.send(Message::text(KEEP_ALIVE)).is_ok() {
+                r.last_keep_alive = Instant::now();
+                continue;
+            }
+        } else if alive && !expired {
+            continue;
+        }
+        if let Some(mut r) = slot.take() {
+            r.socket.close(None).ok();
+        }
+        log::info!(
+            "fn dictation: the socket opened ahead is closed ({})",
+            if expired { "unused" } else { "the server closed it" }
+        );
+        return;
+    }
+}
+
+/// The socket opened ahead, when it is fresh and was opened with these
+/// keyterms; the press then skips the Keychain read and the handshake.
+fn take_ready(keyterms: &[String], timing: &Timing) -> Option<Socket> {
+    let r = ready().take()?;
+    let mut socket = r.socket;
+    if r.keyterms != keyterms || r.opened.elapsed() >= READY_FOR {
+        socket.close(None).ok();
+        return None;
+    }
+    timing.log(format_args!(
+        "socket opened ahead taken (open for {} ms)",
+        r.opened.elapsed().as_millis()
+    ));
+    Some(socket)
 }
 
 /// Open the socket with Claude Code's login, reading the token again once

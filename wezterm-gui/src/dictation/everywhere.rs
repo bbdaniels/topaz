@@ -68,6 +68,8 @@ fn start_tap_if_enabled() {
     if let Err(err) = spawned {
         log::error!("fn dictation: cannot start the event tap's thread: {err:#}");
         TAP_STARTED.store(false, Ordering::SeqCst);
+    } else {
+        super::warm_microphone();
     }
 }
 
