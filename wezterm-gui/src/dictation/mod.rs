@@ -86,15 +86,29 @@ const FALLBACK_CLAUDE_VERSION: &str = "2.1.319";
 /// `target` (Target::Pane or Target::App; everywhere.rs decides). When
 /// Claude Code's sign in is missing, expired or refused, which Ben must fix
 /// himself, the sink shows a notice.
+///
+/// Loupe's gem goes blue here, on the fn tap's thread at the press, before
+/// the session's thread starts or Topaz looks for its focused pane (which
+/// waits on the GUI thread, up to a second when it is busy). The light then
+/// moves into the session, so every way the session ends, no focused pane
+/// included, drops it and turns the gem back.
 pub fn start(target: Target, keyterms: Vec<String>, pressed: Instant) -> Session {
+    let light = lit_at_press(pressed, {
+        let timing = Timing::new(pressed);
+        move |state: light::State| {
+            post_to_loupe(state);
+            timing.log(format_args!("told Loupe {}", state.as_str()));
+        }
+    });
     Session::spawn(pressed, move |commands, shared| {
+        let mut light = light;
         let Some(mut sink) = Sink::for_target(target) else {
             shared
                 .timing
                 .log(format_args!("session end (no focused pane)"));
             return;
         };
-        match run(&mut sink, &keyterms, &commands, &shared) {
+        match run(&mut sink, &keyterms, &commands, &shared, &mut light) {
             Ok(end) => shared.timing.log(format_args!("session end ({end})")),
             Err(err) => {
                 shared.timing.log(format_args!("session end (error)"));
@@ -105,6 +119,13 @@ pub fn start(target: Target, keyterms: Vec<String>, pressed: Instant) -> Session
             }
         }
     })
+}
+
+/// A light posting "listening" now, at the press.
+fn lit_at_press<P: FnMut(light::State)>(pressed: Instant, post: P) -> light::Light<P> {
+    let mut light = light::Light::new(post);
+    light.listening(pressed);
+    light
 }
 
 /// How long the session waits for the GUI thread to name the focused pane.
@@ -243,16 +264,12 @@ fn run(
     keyterms: &[String],
     commands: &Receiver<Command>,
     shared: &Shared,
+    light: &mut light::Light<impl FnMut(light::State)>,
 ) -> anyhow::Result<End> {
     let timing = &shared.timing;
-    // Loupe's gem is blue from the fn press, before the microphone and the
-    // socket open, until fn is released; dropping the light on any way out
-    // (cancel, error, `?`) turns it off.
-    let mut light = light::Light::new(|state: light::State| {
-        post_to_loupe(state);
-        timing.log(format_args!("told Loupe {}", state.as_str()));
-    });
-    light.listening(Instant::now());
+    // Loupe's gem has been blue since the fn press (`start`); it is
+    // refreshed while fn is held and put out at its release, and dropping
+    // it on any way out (cancel, error, `?`) turns it off.
     // Capture next, so that audio buffers while the socket opens.
     let (audio_tx, audio) = channel::<Vec<f32>>();
     let first_buffer = Arc::new(OnceLock::new());
@@ -275,8 +292,7 @@ fn run(
         }
     };
 
-    let Some((mut socket, mut finish_now)) =
-        connect_in_time(keyterms, commands, timing, &mut light)?
+    let Some((mut socket, mut finish_now)) = connect_in_time(keyterms, commands, timing, light)?
     else {
         return Ok("cancelled while connecting");
     };
@@ -456,7 +472,8 @@ fn run(
 }
 
 /// Tell Loupe the light's state (light.rs): a distributed notification,
-/// delivered at once, from the session's thread.
+/// delivered at once, from the fn tap's thread at the press and from the
+/// session's thread after.
 fn post_to_loupe(state: light::State) {
     use objc2::rc::autoreleasepool;
     use objc2::runtime::AnyObject;
@@ -830,6 +847,31 @@ mod tests {
         assert!(url.contains("&use_conversation_engine=true&forward_interims=typed"));
         assert!(!url.contains(char::is_whitespace));
         assert!(url.into_client_request().is_ok());
+    }
+
+    #[test]
+    fn the_light_is_on_at_the_press_and_off_when_a_session_ends_early() {
+        use std::sync::Mutex;
+        let posts = Arc::new(Mutex::new(vec![]));
+        let sink = Arc::clone(&posts);
+        let pressed = Instant::now();
+        let light = lit_at_press(pressed, move |state| sink.lock().unwrap().push(state));
+        // Posted on the pressing thread, before any session thread runs.
+        assert_eq!(*posts.lock().unwrap(), [light::State::Listening]);
+        // A session that finds nowhere to type (no focused pane) returns at
+        // once; the light it owns goes out with it.
+        let session = Session::spawn(pressed, move |_commands, _shared| {
+            let _light = light;
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while session.is_alive() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!session.is_alive());
+        assert_eq!(
+            *posts.lock().unwrap(),
+            [light::State::Listening, light::State::Stopped]
+        );
     }
 
     #[test]

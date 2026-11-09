@@ -1,7 +1,8 @@
 //! Loupe's menu bar gem shows blue while a dictation is listening (Ben,
-//! 2026-11-08): from the instant fn is pressed, before the microphone and the
-//! speech to text socket open (waiting for the connection made it lag the
-//! press by about half a second), until fn is released or the session ends
+//! 2026-11-08): from the instant fn is pressed, posted on the fn tap's thread
+//! at the press (mod.rs `start`), before the session looks for its focused
+//! pane and before the microphone and the speech to text socket open
+//! (waiting for the connection made it lag the press by about half a second), until fn is released or the session ends
 //! however it ends (cancel, error, the service closing). Topaz tells
 //! Loupe with a distributed notification, `NOTIFICATION`, whose userInfo has
 //! `state` ("listening" or "stopped") and `pid` (Topaz's, which Loupe was
