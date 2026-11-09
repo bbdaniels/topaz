@@ -473,8 +473,9 @@ struct ConfigInner {
     warnings: Vec<String>,
     generation: usize,
     watcher: Option<notify::RecommendedWatcher>,
-    subscribers: HashMap<usize, Box<dyn Fn() -> bool + Send>>,
 }
+
+type Subscribers = HashMap<usize, Box<dyn Fn() -> bool + Send>>;
 
 impl ConfigInner {
     fn new() -> Self {
@@ -484,26 +485,7 @@ impl ConfigInner {
             warnings: vec![],
             generation: 0,
             watcher: None,
-            subscribers: HashMap::new(),
         }
-    }
-
-    fn subscribe<F>(&mut self, subscriber: F) -> usize
-    where
-        F: Fn() -> bool + 'static + Send,
-    {
-        static SUB_ID: AtomicUsize = AtomicUsize::new(0);
-        let sub_id = SUB_ID.fetch_add(1, Ordering::Relaxed);
-        self.subscribers.insert(sub_id, Box::new(subscriber));
-        sub_id
-    }
-
-    fn unsub(&mut self, sub_id: usize) {
-        self.subscribers.remove(&sub_id);
-    }
-
-    fn notify(&mut self) {
-        self.subscribers.retain(|_, notify| notify());
     }
 
     fn watch_path(&mut self, path: PathBuf) {
@@ -632,7 +614,6 @@ impl ConfigInner {
             }
         }
 
-        self.notify();
         if self.config.automatically_reload_config {
             for path in watch_paths {
                 self.watch_path(path);
@@ -687,12 +668,18 @@ impl ConfigInner {
 
 pub struct Configuration {
     inner: Mutex<ConfigInner>,
+    // Kept apart from `inner` so that reload hooks run after the reload has
+    // released the config lock: a hook that reads the config (as most do)
+    // would otherwise wait on that lock forever and freeze every thread
+    // behind it.
+    subscribers: Mutex<Subscribers>,
 }
 
 impl Configuration {
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(ConfigInner::new()),
+            subscribers: Mutex::new(HashMap::new()),
         }
     }
 
@@ -710,13 +697,25 @@ impl Configuration {
     where
         F: Fn() -> bool + 'static + Send,
     {
-        let mut inner = self.inner.lock().unwrap();
-        inner.subscribe(subscriber)
+        static SUB_ID: AtomicUsize = AtomicUsize::new(0);
+        let sub_id = SUB_ID.fetch_add(1, Ordering::Relaxed);
+        self.subscribers
+            .lock()
+            .unwrap()
+            .insert(sub_id, Box::new(subscriber));
+        sub_id
     }
 
     fn unsub(&self, sub_id: usize) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.unsub(sub_id);
+        self.subscribers.lock().unwrap().remove(&sub_id);
+    }
+
+    /// Runs the reload hooks. The config lock must not be held here.
+    fn notify(&self) {
+        self.subscribers
+            .lock()
+            .unwrap()
+            .retain(|_, notify| notify());
     }
 
     /// Reset the configuration to defaults
@@ -744,8 +743,8 @@ impl Configuration {
 
     /// Reload the configuration
     pub fn reload(&self) {
-        let mut inner = self.inner.lock().unwrap();
-        inner.reload();
+        self.inner.lock().unwrap().reload();
+        self.notify();
     }
 
     /// Returns a copy of any captured error message.
@@ -831,4 +830,33 @@ fn default_one_point_oh() -> f32 {
 
 fn default_true() -> bool {
     true
+}
+
+#[cfg(test)]
+mod reload_hook_test {
+    use super::*;
+
+    /// A reload hook that reads the config (as most do) must not wait on the
+    /// config lock the reload holds; it once froze Topaz on every reload.
+    #[test]
+    fn a_reload_hook_can_read_the_config() {
+        let dir = std::env::temp_dir().join(format!("reload-hook-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("wezterm.lua");
+        std::fs::write(&file, "return {}\n").unwrap();
+        std::env::set_var("WEZTERM_CONFIG_FILE", &file);
+
+        let config: &'static Configuration = Box::leak(Box::new(Configuration::new()));
+        let (tx, rx) = std::sync::mpsc::channel();
+        config.subscribe(move || {
+            let _ = config.get();
+            tx.send(()).ok();
+            true
+        });
+        std::thread::spawn(move || config.reload());
+
+        let result = rx.recv_timeout(Duration::from_secs(10));
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(result.is_ok(), "the reload hook did not finish reading the config");
+    }
 }
