@@ -38,7 +38,8 @@
 # with Topaz's. A stable signature keeps each permission (Topaz's
 # microphone, each helper's Accessibility) across rebuilds; each helper
 # keeps its bundle id and its designated requirement, which is checked
-# against the installed copy.
+# against the installed copy, and every permission already granted to Topaz
+# or a helper is checked to name that signature (grants).
 # Signing reads the keychain, which an ssh login cannot, so run this in a
 # window of the gate's tmux, for example:
 #   /opt/homebrew/bin/tmux -L pi-gate new-window -d -t pi-gate-keep \
@@ -167,6 +168,46 @@ verify() {
     echo "Loupe's designated requirement is not $want: its grants would not carry over." >&2
     [[ ${TOPAZ_NEW_IDENTITY:-} == 1 ]] || exit 1
   fi
+  grants $1
+}
+
+# Every permission macOS has granted to Topaz or a helper (each allowed
+# row of the user's and the system's TCC databases, by bundle id) names the
+# designated requirement the app at $1 is signed with; a grant made to
+# another (an earlier certificate) is kept on the list but never applied,
+# which is how the certificate change of 2026-11-08 left Topaz without Input
+# Monitoring until 2026-11-10, so fn dictation heard no key outside Topaz.
+# Fails, naming each stale grant and its reset, unless TOPAZ_NEW_IDENTITY=1.
+# Reading the databases needs Full Disk Access for the process running this;
+# without it, it says so and goes on.
+grants() {
+  local stale=0 unread= app id want db rows service req tmp=$(mktemp /tmp/topaz-csreq.XXXXXX)
+  for app in $1 $1/$LOUPE_IN $1/$LAUNCHER_IN; do
+    [[ -d $app ]] || continue
+    id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' $app/Contents/Info.plist)
+    want=$(designated $app)
+    for db in "$HOME/Library/Application Support/com.apple.TCC/TCC.db" \
+              "/Library/Application Support/com.apple.TCC/TCC.db"; do
+      if ! rows=$(/usr/bin/sqlite3 -separator ' ' "file:$db?mode=ro" \
+          "select service, hex(csreq) from access where client = '$id' and client_type = 0 and auth_value >= 2 and csreq is not null" 2>/dev/null); then
+        [[ $unread == *"$db"* ]] || unread="${unread:+$unread and }$db"
+        continue
+      fi
+      for service req in ${=rows}; do
+        print -rn -- $req | xxd -r -p > $tmp
+        req=$(csreq -r $tmp -t 2>/dev/null)
+        [[ $req == $want ]] && continue
+        echo "$id's ${service#kTCCService} grant names $req, not $want, so macOS does not apply it: run tccutil reset ${service#kTCCService} $id and grant it again." >&2
+        stale=1
+      done
+    done
+  done
+  rm -f $tmp
+  [[ -n $unread ]] && echo "Grants not checked in $unread: this process cannot read it (Full Disk Access)." >&2
+  if (( stale )); then
+    [[ ${TOPAZ_NEW_IDENTITY:-} == 1 ]] || exit 1
+  fi
+  return 0
 }
 
 install_staged() {
