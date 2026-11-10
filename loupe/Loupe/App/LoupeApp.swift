@@ -58,6 +58,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        PermissionReport.log(subsystem: "com.bbdaniels.topaz.loupe")
         // A helper inside Topaz.app (LSUIElement, 2026-11-08): no Dock icon, no
         // Cmd-Tab entry and no Quit item; Topaz launches it, relaunches it if it
         // exits and ends it when Topaz quits. Launched by Topaz, it is given

@@ -38,8 +38,8 @@
 # with Topaz's. A stable signature keeps each permission (Topaz's
 # microphone, each helper's Accessibility) across rebuilds; each helper
 # keeps its bundle id and its designated requirement, which is checked
-# against the installed copy, and every permission already granted to Topaz
-# or a helper is checked to name that signature (grants).
+# against the installed copy, and after an install each app's report of the
+# permissions macOS applies to it is checked (permissions).
 # Signing reads the keychain, which an ssh login cannot, so run this in a
 # window of the gate's tmux, for example:
 #   /opt/homebrew/bin/tmux -L pi-gate new-window -d -t pi-gate-keep \
@@ -168,46 +168,58 @@ verify() {
     echo "Loupe's designated requirement is not $want: its grants would not carry over." >&2
     [[ ${TOPAZ_NEW_IDENTITY:-} == 1 ]] || exit 1
   fi
-  grants $1
 }
 
-# Every permission macOS has granted to Topaz or a helper (each allowed
-# row of the user's and the system's TCC databases, by bundle id) names the
-# designated requirement the app at $1 is signed with; a grant made to
-# another (an earlier certificate) is kept on the list but never applied,
-# which is how the certificate change of 2026-11-08 left Topaz without Input
-# Monitoring until 2026-11-10, so fn dictation heard no key outside Topaz.
-# Fails, naming each stale grant and its reset, unless TOPAZ_NEW_IDENTITY=1.
-# Reading the databases needs Full Disk Access for the process running this;
-# without it, it says so and goes on.
-grants() {
-  local stale=0 unread= app id want db rows service req tmp=$(mktemp /tmp/topaz-csreq.XXXXXX)
-  for app in $1 $1/$LOUPE_IN $1/$LAUNCHER_IN; do
-    [[ -d $app ]] || continue
-    id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' $app/Contents/Info.plist)
-    want=$(designated $app)
-    for db in "$HOME/Library/Application Support/com.apple.TCC/TCC.db" \
-              "/Library/Application Support/com.apple.TCC/TCC.db"; do
-      if ! rows=$(/usr/bin/sqlite3 -separator ' ' "file:$db?mode=ro" \
-          "select service, hex(csreq) from access where client = '$id' and client_type = 0 and auth_value >= 2 and csreq is not null" 2>/dev/null); then
-        [[ $unread == *"$db"* ]] || unread="${unread:+$unread and }$db"
-        continue
+# After an install, read each app's own report of the permissions macOS
+# applies to it (Topaz: Accessibility, Input Monitoring, Microphone, in its
+# log file; each helper: Accessibility, in the unified log), logged once at
+# launch (dictation/everywhere.rs log_permissions, TopazKit
+# PermissionReport). A grant made to an earlier signature stays listed in
+# System Settings but is never applied, which is how the certificate change
+# of 2026-11-08 left Topaz without Input Monitoring until 2026-11-10, so fn
+# dictation heard no key outside Topaz. The apps ask macOS themselves
+# because the permission databases cannot be read from the gate's tmux
+# (no Full Disk Access). $1 is when the apps were (re)launched, as
+# `log show --start` takes it; then any of topaz, loupe, launcher. Names
+# each permission not applied, with its reset, and returns 1; also returns
+# 1 when an app has not reported within 30 seconds.
+permissions() {
+  local since=$1 short=1 which name id file line service pid
+  shift
+  for which in $@; do
+    case $which in
+      topaz) name=Topaz id=com.bbdaniels.topaz ;;
+      loupe) name=Loupe id=com.bbdaniels.topaz.loupe ;;
+      launcher) name="Topaz Launcher" id=com.bbdaniels.topaz.launcher ;;
+    esac
+    line=
+    for _ in {1..15}; do
+      if [[ $which == topaz ]]; then
+        pid=$(pgrep -n -f $APP/Contents/MacOS/wezterm-gui || true)
+        file=$HOME/.local/share/wezterm/wezterm-gui-log-$pid.txt
+        [[ -n $pid && -f $file ]] && line=$(grep -o 'permissions: .*' $file | tail -1 || true)
+      else
+        line=$(/usr/bin/log show --start "$since" --style compact \
+          --predicate "subsystem == \"$id\" AND category == \"Permissions\"" 2>/dev/null \
+          | grep -o 'permissions: .*' | tail -1 || true)
       fi
-      for service req in ${=rows}; do
-        print -rn -- $req | xxd -r -p > $tmp
-        req=$(csreq -r $tmp -t 2>/dev/null)
-        [[ $req == $want ]] && continue
-        echo "$id's ${service#kTCCService} grant names $req, not $want, so macOS does not apply it: run tccutil reset ${service#kTCCService} $id and grant it again." >&2
-        stale=1
-      done
+      [[ -n $line ]] && break
+      sleep 2
+    done
+    if [[ -z $line ]]; then
+      echo "$name has not reported its permissions within 30 s of $since, so they are not checked." >&2
+      short=0
+      continue
+    fi
+    echo "$name: ${line#permissions: }"
+    for service in ${=${line#permissions: }}; do
+      [[ $service == *=no ]] || continue
+      service=${service%=no}
+      echo "$name does not have $service. If System Settings shows it on, the grant names an earlier signature: run tccutil reset $service $id and grant it again." >&2
+      short=0
     done
   done
-  rm -f $tmp
-  [[ -n $unread ]] && echo "Grants not checked in $unread: this process cannot read it (Full Disk Access)." >&2
-  if (( stale )); then
-    [[ ${TOPAZ_NEW_IDENTITY:-} == 1 ]] || exit 1
-  fi
-  return 0
+  (( short ))
 }
 
 install_staged() {
@@ -228,12 +240,15 @@ install_staged() {
   local failed=
   $LSREGISTER -f $APP || failed="lsregister"
   "$CONFIG_INSTALLER" || failed="${failed:+$failed, }the config installer ($CONFIG_INSTALLER)"
+  local since=$(date '+%Y-%m-%d %H:%M:%S') applied=1
   open $APP
   echo "Installed $(/usr/libexec/PlistBuddy -c 'Print :TopazCommit' $APP/Contents/Info.plist) to $APP and reopened it."
+  permissions $since topaz loupe launcher || applied=0
   if [[ -n $failed ]]; then
     echo "But $failed failed; Topaz is running on the config it had." >&2
     exit 1
   fi
+  (( applied )) || exit 1
 }
 
 # Replace helper $1 (loupe, or hud, its old name; or launcher) inside the
@@ -253,7 +268,7 @@ install_helper() {
   sign_topaz $APP
   verify $APP "$loupe_want" "$launcher_want"
   $LSREGISTER -f $APP/$inside
-  local exe="$APP/$inside/Contents/MacOS/$name" old new
+  local exe="$APP/$inside/Contents/MacOS/$name" old new since=$(date '+%Y-%m-%d %H:%M:%S')
   old=$(pgrep -f $exe || true)
   [[ -n $old ]] && kill -TERM ${(f)old}
   for _ in {1..40}; do
@@ -266,6 +281,7 @@ install_helper() {
     exit 1
   fi
   echo "$name $HELPERS_COMMIT is running inside $APP (pid $new)."
+  permissions $since ${1/hud/loupe} || exit 1
 }
 
 case ${1:-} in

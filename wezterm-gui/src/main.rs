@@ -785,6 +785,8 @@ fn run_terminal_gui(opts: StartCommand, default_domain_name: Option<String>) -> 
     // fn dictation hears fn in every app from here, when it is on.
     #[cfg(target_os = "macos")]
     crate::dictation::everywhere::start_if_enabled();
+    #[cfg(target_os = "macos")]
+    crate::dictation::everywhere::log_permissions();
     let activity = Activity::new();
 
     promise::spawn::spawn(async move {

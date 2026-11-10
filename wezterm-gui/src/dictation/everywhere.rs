@@ -142,6 +142,39 @@ extern "C" {
     static kCFRunLoopCommonModes: CFStringRef;
 }
 
+#[link(name = "AVFoundation", kind = "framework")]
+extern "C" {
+    /// An `NSString *`.
+    static AVMediaTypeAudio: *const c_void;
+}
+
+/// AVAuthorizationStatusAuthorized.
+const AV_AUTHORIZED: isize = 3;
+
+/// Log, once at launch, the permissions macOS applies to Topaz now, as
+/// `permissions: Accessibility=yes ListenEvent=yes Microphone=yes`: what
+/// each check answers for this process, not what System Settings lists,
+/// since a grant made to an earlier signature stays listed but is never
+/// applied (Input Monitoring, 2026-11-08 to 2026-11-10). topaz-build.sh
+/// reads the line after an install; asks for nothing.
+pub fn log_permissions() {
+    let yes = |granted: bool| if granted { "yes" } else { "no" };
+    let accessibility = unsafe { AXIsProcessTrusted() != 0 };
+    let listen = unsafe { CGPreflightListenEventAccess() };
+    let status: isize = unsafe {
+        objc2::msg_send![
+            objc2::class!(AVCaptureDevice),
+            authorizationStatusForMediaType: AVMediaTypeAudio.cast::<objc2::runtime::AnyObject>()
+        ]
+    };
+    log::info!(
+        "permissions: Accessibility={} ListenEvent={} Microphone={}",
+        yes(accessibility),
+        yes(listen),
+        yes(status == AV_AUTHORIZED)
+    );
+}
+
 #[link(name = "Carbon", kind = "framework")]
 extern "C" {
     fn IsSecureEventInputEnabled() -> u8;

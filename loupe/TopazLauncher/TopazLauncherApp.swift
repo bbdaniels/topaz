@@ -20,6 +20,7 @@ final class LauncherDelegate: NSObject, NSApplicationDelegate {
     private var parentWatch: DispatchSourceProcess?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        PermissionReport.log(subsystem: "com.bbdaniels.topaz.launcher")
         if let pid = ParentWatch.parentPid(ProcessInfo.processInfo.environment) {
             parentWatch = ParentWatch.watch(pid) {
                 logger.info("Topaz (\(pid, privacy: .public)) exited: quitting")
