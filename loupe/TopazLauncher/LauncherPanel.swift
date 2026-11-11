@@ -212,19 +212,17 @@ final class LauncherController: NSObject, NSTextFieldDelegate, NSTableViewDataSo
         open(results[row])
     }
 
-    /// A running app is brought forward (unhidden if hidden); any other is
-    /// launched.
+    /// The app comes forward through Launch Services, running or not, as a
+    /// Dock click brings it: unhidden, its windows in front, and a new window
+    /// when it has none. `NSRunningApplication.activate` cannot do this from
+    /// here: under macOS 14's cooperative activation an app that is not
+    /// active (the launcher's panel never activates it) may not hand
+    /// activation on, so the call was ignored and a running app stayed behind
+    /// (Ben, 2026-11-11).
     private func open(_ c: AppMatcher.Candidate) {
         hide()
         frecency.record(c.path, at: Date())
         frecency.save(to: defaults)
-        if let app = index.runningApp(at: c.path) {
-            if app.isHidden { app.unhide() }
-            if !app.activate(options: [.activateAllWindows]) {
-                logger.error("\(c.name, privacy: .public) did not come forward")
-            }
-            return
-        }
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
         NSWorkspace.shared.openApplication(at: URL(fileURLWithPath: c.path), configuration: config) { _, error in

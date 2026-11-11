@@ -41,11 +41,6 @@ final class AppIndex: NSObject {
         if !query.start() { logger.error("the Spotlight query did not start") }
     }
 
-    /// The running app at `path`, if any.
-    func runningApp(at path: String) -> NSRunningApplication? {
-        NSWorkspace.shared.runningApplications.first { $0.bundleURL?.standardizedFileURL.path == path }
-    }
-
     @objc private func gathered() {
         query.disableUpdates()
         var paths: [String] = []
