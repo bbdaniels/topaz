@@ -89,7 +89,6 @@ struct HighlightedMarkdownText: View {
 enum FixedTab: String, CaseIterable {
     // User-facing labels (one word each, also used as tooltips):
     //   history   → "Sessions"  — past Claude Code sessions
-    //   library   → "Claude"    — background agents + Claude internals
     //   vault     → "Projects"  — vault-driven per-project browser
     //   today     → "Today"     — schedule, briefing, daily note
     //
@@ -97,10 +96,11 @@ enum FixedTab: String, CaseIterable {
     //
     // Killed tabs kept inert in services (push notif, permission watcher,
     // AgentsService standalone tab, obsidian
-    // Notes tab — Daily Notes are now in Today). Raw values stay so
-    // hiddenTabs UserDefaults entries from older builds keep meaning.
+    // Notes tab — Daily Notes are now in Today; the Claude tab, which
+    // browsed skills, agents, hooks and settings, went 2026-11-11). Raw
+    // values stay so hiddenTabs UserDefaults entries from older builds keep
+    // meaning; a saved raw value with no case is dropped on read.
     case history
-    case library
     case vault
     case today
 
@@ -109,15 +109,14 @@ enum FixedTab: String, CaseIterable {
         case .history: return "clock.arrow.circlepath"
         case .vault: return "briefcase"               // overridden by the TopazLogo asset; see assetIcon.
         case .today: return "calendar"
-        case .library: return "books.vertical.fill"
         }
     }
 
     /// Image asset name to use INSTEAD of the SF Symbol for this tab, when set.
     /// The Projects tab wears the Topaz gem (it absorbed the header's old
     /// standalone logo, 2026-08-31, and the gem replaced the Claude mark,
-    /// 2026-11-08); Library keeps its SF Symbol so the logo stays unique in
-    /// the strip.
+    /// 2026-11-08); the other tabs keep their SF Symbols so the logo stays
+    /// unique in the strip.
     var assetIcon: String? {
         switch self {
         case .vault: return "TopazLogo"
@@ -130,7 +129,6 @@ enum FixedTab: String, CaseIterable {
         case .history: return "Sessions"
         case .vault: return "Projects"
         case .today: return "Today"
-        case .library: return "Claude"
         }
     }
 
@@ -144,7 +142,6 @@ enum FixedTab: String, CaseIterable {
         case .history: return "Browse and resume past Claude Code sessions"
         case .vault: return "Per-project status, tasks, and notes from the Karpathy archive"
         case .today: return "Schedule, AI briefing, and today's daily note"
-        case .library: return "Background sessions pinned on top; Claude internals (skills, agents, hooks, rules, MCP, settings) below"
         }
     }
 
@@ -207,10 +204,6 @@ struct HUDContentView: View {
 
                 UsageBadge()
 
-                PermissionModeMenu()
-
-                RemoteControlMenu()
-
                 Button(action: {
                     terminalService.launchClaudeInProjects()
                 }) {
@@ -271,16 +264,12 @@ struct HUDContentView: View {
                     .environmentObject(appState.vaultIngestService)
                     .environmentObject(vaultManager)
                     // Sessions and the terminal come from the panel root.
-                    // Agents injected here because only the Projects/
-                    // Library tabs use the live roster.
+                    // Agents injected here because only the Projects tab
+                    // uses the live roster.
                     .environmentObject(appState.agentsService)
             case .today:
                 TodayView()
                     .environmentObject(vaultManager)
-            case .library:
-                LibraryView()
-                    .environmentObject(appState.libraryService)
-                    .environmentObject(terminalService)
             }
         }
         .frame(minWidth: 380, minHeight: 420)
@@ -708,12 +697,13 @@ struct TimeSectionView: View {
 // MARK: - Launch permission mode (global)
 
 /// The single, global permission mode every Loupe-launched session
-/// starts in. Chosen from the header picker and persisted in
+/// starts in. Chosen in the info popover (`LaunchSection`) and persisted in
 /// `UserDefaults` (`launch.permissionMode`); read at launch time by
 /// `permissionModeFlag()`, which every launch path (magic launch, `>_` at
 /// `~`, resume, HUD tab) folds into its `claude` invocation. One control,
 /// one source of truth — no per-row or per-launch override (user directive
-/// 2026-09-03: "a single global mode control at the top").
+/// 2026-09-03: "a single global mode control"; it moved from the header
+/// into the info popover on 2026-11-11).
 enum LaunchPermissionMode: String, CaseIterable, Identifiable {
     /// No flag: Claude Code's own configured default.
     case inherit = ""
@@ -747,19 +737,7 @@ enum LaunchPermissionMode: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Compact header readout.
-    var shortTitle: String {
-        switch self {
-        case .inherit: return "default"
-        case .manual: return "manual"
-        case .acceptEdits: return "edits"
-        case .plan: return "plan"
-        case .auto: return "auto"
-        case .bypass: return "bypass"
-        }
-    }
-
-    /// Header color — the only visible signal of the current mode.
+    /// The mode's color in the info popover.
     var color: Color {
         switch self {
         case .inherit: return .secondary
@@ -800,84 +778,6 @@ enum LaunchPermissionMode: String, CaseIterable, Identifiable {
 
 /// The `--permission-mode` fragment for the currently selected global mode.
 func permissionModeFlag() -> String { LaunchPermissionMode.current.cliFlag }
-
-/// Header picker: one global control for the mode every launch uses.
-struct PermissionModeMenu: View {
-    @AppStorage(LaunchPermissionMode.defaultsKey) private var raw: String = ""
-
-    private var mode: LaunchPermissionMode { LaunchPermissionMode(rawValue: raw) ?? .inherit }
-
-    var body: some View {
-        HeaderGlyphMenu(systemName: "shield.fill", color: mode.color,
-                        tip: "Permission mode: \(mode.title)") {
-            ForEach(LaunchPermissionMode.allCases) { m in
-                Button {
-                    raw = m.rawValue
-                } label: {
-                    if m == mode {
-                        Label(m.title, systemImage: "checkmark")
-                    } else {
-                        Text(m.title)
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// A header Menu whose label is a colored glyph, sized by the glyph. The
-/// `.borderlessButton` style repaints a label in its own tint and sizes the
-/// control by its AppKit cell (about 6 pt wide for an empty label, so the
-/// glyph drawn behind it was mostly unclickable); the plain button style
-/// draws the label as given, so the glyph is both the paint and the target.
-struct HeaderGlyphMenu<Content: View>: View {
-    let systemName: String
-    let color: Color
-    let tip: String
-    @ViewBuilder let content: () -> Content
-    @Environment(\.fontScale) private var scale
-
-    var body: some View {
-        Menu(content: content) {
-            Image(systemName: systemName)
-                .font(.system(size: 12 * scale, weight: .semibold))
-                .foregroundColor(color)
-                .frame(width: 16 * scale, height: 16 * scale)
-                .contentShape(Rectangle())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .hudTip(tip)
-    }
-}
-
-/// Header control for the persistent Remote Control server
-/// (`RemoteControlServerService`): the glyph's color carries its state
-/// (green running, orange enabled but down, gray off), the menu turns it on
-/// or off. Its permission mode follows `PermissionModeMenu`. A restart or
-/// turn-off waits for the server's live sessions to end, and the status line
-/// says so (`RemoteControlReload`).
-struct RemoteControlMenu: View {
-    @EnvironmentObject var server: RemoteControlServerService
-    var body: some View {
-        HeaderGlyphMenu(systemName: "dot.radiowaves.left.and.right", color: color,
-                        tip: "Remote Control: \(server.status)") {
-            Text(server.status)
-            Divider()
-            Toggle("Remote Control", isOn: Binding(
-                get: { server.isOn },
-                set: { server.setEnabled($0) }
-            ))
-            .disabled(server.isBusy)
-        }
-    }
-    private var color: Color {
-        if server.pid != nil { return .green }
-        return server.isEnabled ? .orange : .secondary
-    }
-}
 
 // MARK: - Daemon registration
 
@@ -1287,6 +1187,11 @@ struct InfoPopover: View {
 
             Divider()
 
+            // Launch: the permission mode and the Remote Control server
+            LaunchSection()
+
+            Divider()
+
             // claude.ai cookie (usage)
             ClaudeAICookieSection()
 
@@ -1364,6 +1269,80 @@ private struct InfoRow: View {
             Text(text)
                 .font(.custom("Fira Sans", size: 12))
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+// MARK: - Launch Settings
+
+/// The global permission mode every Loupe-launched session starts in
+/// (`LaunchPermissionMode`), and the persistent Remote Control server
+/// (`RemoteControlServerService`), whose permission mode follows it. The
+/// Remote Control glyph's color carries the server's state (green running,
+/// orange enabled but down, gray off). A restart or turn-off waits for the
+/// server's live sessions to end, and the status line says so
+/// (`RemoteControlReload`). Both lived in the header until 2026-11-11.
+private struct LaunchSection: View {
+    @AppStorage(LaunchPermissionMode.defaultsKey) private var raw: String = ""
+    @EnvironmentObject var server: RemoteControlServerService
+
+    private var mode: LaunchPermissionMode { LaunchPermissionMode(rawValue: raw) ?? .inherit }
+
+    private var serverColor: Color {
+        if server.pid != nil { return .green }
+        return server.isEnabled ? .orange : .secondary
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Launch")
+                .font(.custom("Fira Sans", size: 12).weight(.semibold))
+                .foregroundColor(.secondary)
+
+            HStack(spacing: 8) {
+                Image(systemName: mode.symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(mode.color)
+                    .frame(width: 14, alignment: .center)
+                Text("Permission mode")
+                    .font(.custom("Fira Sans", size: 12))
+                Spacer()
+                Picker("", selection: Binding(
+                    get: { mode },
+                    set: { raw = $0.rawValue }
+                )) {
+                    ForEach(LaunchPermissionMode.allCases) { m in
+                        Text(m.title).tag(m)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                .font(.custom("Fira Sans", size: 11))
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(serverColor)
+                    .frame(width: 14, alignment: .center)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Remote Control")
+                        .font(.custom("Fira Sans", size: 12))
+                    Text(server.status)
+                        .font(.custom("Fira Sans", size: 10))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { server.isOn },
+                    set: { server.setEnabled($0) }
+                ))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .disabled(server.isBusy)
+            }
         }
     }
 }

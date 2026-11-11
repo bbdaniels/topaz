@@ -13,14 +13,14 @@ private let logger = Logger(subsystem: "com.bbdaniels.topaz.loupe", category: "R
 /// `~/Library/LaunchAgents`, so the state after a reboot is the state the
 /// toggle shows: launchd loads the plist at login, and disabling deletes it.
 ///
-/// The server's `--permission-mode` follows the header's global permission
-/// picker (`LaunchPermissionMode`); when the picker changes, the plist is
+/// The server's `--permission-mode` follows the global permission mode
+/// (`LaunchPermissionMode`, chosen in the info popover); when it changes, the plist is
 /// rewritten and the agent reloaded so the server matches.
 ///
 /// The sessions the server runs are its child processes, so a reload or
 /// turning it off ends every one of them (Ben, 2026-11-08). Such a change
 /// therefore waits while the server has a live session (`RemoteControlReload`),
-/// is applied by the poll once the last one ends, and the header says so.
+/// is applied by the poll once the last one ends, and the info popover says so.
 @MainActor
 final class RemoteControlServerService: ObservableObject {
     /// True when the plist is installed (launchd loads it at login).
@@ -34,7 +34,8 @@ final class RemoteControlServerService: ObservableObject {
     /// A reload or turn-off waiting for those sessions to end.
     @Published private(set) var waiting: RemoteControlChange?
 
-    /// The header's line, which says when a change waits for sessions.
+    /// The info popover's status line, which says when a change waits for
+    /// sessions.
     var status: String {
         RemoteControlReload.status(isBusy: isBusy, pid: pid, isEnabled: isEnabled,
                                    serverName: Self.serverName, liveSessions: liveSessions,

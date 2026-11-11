@@ -11,14 +11,12 @@ class AppState: ObservableObject {
     let sessionHistoryService = SessionHistoryService()
     let vaultManager = VaultManager()
     let usageService = UsageService()
-    let skillsService = SkillsService()
     let agentsService = AgentsService()
     let processMonitor = ClaudeProcessMonitor()
     let vaultIngestService = VaultIngestService()
     let vaultProjectService = VaultProjectService()
     let remoteControlServer = RemoteControlServerService()
     let screenCoverService: ScreenCoverService
-    lazy var libraryService = LibraryService(skillsService: skillsService)
 
     init() {
         self.screenCoverService = ScreenCoverService(agents: agentsService)
@@ -51,8 +49,8 @@ class AppState: ObservableObject {
         }
 
         // Remote Control server: observe the launchd agent, and keep its
-        // permission mode in step with the header picker. Never starts a
-        // server that is turned off.
+        // permission mode in step with the global one (info popover). Never
+        // starts a server that is turned off.
         remoteControlServer.start()
 
         // Session scan at launch, which also brings the transcript search

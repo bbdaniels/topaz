@@ -9,7 +9,7 @@ import Foundation
 // 2026-11-08). The toggle, a permission picker change and a HUD build whose
 // plist differs all went through that bootout at once. Now a change that
 // would stop a running server waits while the server has a live session,
-// applies by itself once the last one ends, and the header says it waits.
+// applies by itself once the last one ends, and the info popover says it waits.
 
 /// A change to the server that stops the running job.
 enum RemoteControlChange: Equatable {
@@ -57,7 +57,7 @@ enum RemoteControlReload {
         definitionIsCurrent && pending != .reload ? nil : .reload
     }
 
-    /// The header's line for the server.
+    /// The info popover's status line for the server.
     static func status(isBusy: Bool, pid: Int?, isEnabled: Bool, serverName: String,
                        liveSessions: Int, waiting: RemoteControlChange?) -> String {
         if isBusy { return "Restarting" }

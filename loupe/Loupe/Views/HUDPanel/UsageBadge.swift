@@ -1,38 +1,39 @@
 import SwiftUI
 
-/// Compact pill badge in the header: session % and weekly %, e.g.
-/// `18% · 64% wk`; the reset times live in the tooltip and the popover, since
-/// the header has no room for them. Every segment is optional and drops out
-/// when its field is missing, so the pill collapses to the bare gauge icon
-/// rather than showing placeholders. Click opens the full breakdown.
+/// The header's usage meter: the weekly limit alone, as ten segments, one per
+/// tenth of the week's allowance used (Ben, 2026-11-11: the weekly is the one
+/// usage that counts). A segment fills once its tenth is reached, so 64%
+/// fills six; the color follows the same bands as the popover (green under
+/// 60%, orange under 85%, red above). The exact percent and the reset time
+/// are in the tooltip, the full breakdown in the popover. With no cookie, no
+/// reading yet, or a stale reading, the segments go gray, and a stale reading
+/// adds the warning triangle.
 struct UsageBadge: View {
     @EnvironmentObject var usageService: UsageService
     @State private var showPopover = false
     @Environment(\.fontScale) private var scale
 
+    static let segmentCount = 10
+
     var body: some View {
         Button(action: { showPopover.toggle() }) {
-            HStack(spacing: 4) {
-                Image(systemName: iconName)
-                    .font(.smallFont(scale))
-                if !segments.isEmpty {
-                    Text(segments.joined(separator: " · "))
-                        .font(.smallFont(scale))
-                        .lineLimit(1)
-                        .fixedSize()
+            HStack(spacing: 5) {
+                HStack(spacing: 2 * scale) {
+                    ForEach(0..<Self.segmentCount, id: \.self) { i in
+                        RoundedRectangle(cornerRadius: 1.5 * scale)
+                            .fill(i < filled ? tint : Color.secondary.opacity(0.25))
+                            .frame(width: 5 * scale, height: 10 * scale)
+                    }
                 }
                 if usageService.isStale {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.captionFont(scale))
+                        .foregroundColor(.secondary)
                 }
             }
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 4)
             .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(tint.opacity(0.15))
-            )
-            .foregroundColor(tint)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
         .help(tooltipText)
@@ -42,24 +43,16 @@ struct UsageBadge: View {
         }
     }
 
-    private var iconName: String { "gauge.with.dots.needle.50percent" }
+    private var weekly: UsageWindow? { usageService.usage?.sevenDay }
 
-    /// Header row, built as optional segments so a missing field self-removes.
-    private var segments: [String] {
-        guard let u = usageService.usage else { return [] }
-        var out: [String] = []
-        if let fh = u.fiveHour {
-            out.append("\(Int(fh.utilization.rounded()))%")
-        }
-        if let wd = u.sevenDay {
-            out.append("\(Int(wd.utilization.rounded()))% wk")
-        }
-        return out
+    /// Segments filled: whole tenths of the allowance used.
+    private var filled: Int {
+        guard let pct = weekly?.utilization else { return 0 }
+        return max(0, min(Self.segmentCount, Int(pct / 100 * Double(Self.segmentCount))))
     }
 
     private var tint: Color {
-        guard usageService.hasCookie else { return .secondary }
-        guard let pct = usageService.usage?.fiveHour?.utilization else { return .secondary }
+        guard usageService.hasCookie, let pct = weekly?.utilization else { return .secondary }
         // A number nobody has refreshed in half an hour shouldn't read as
         // authoritative, however red it is.
         guard !usageService.isStale else { return .secondary }
@@ -76,11 +69,10 @@ struct UsageBadge: View {
         }
         guard let u = usageService.usage else { return "Fetching usage…" }
         var parts: [String] = []
-        if let fh = u.fiveHour {
-            parts.append("5-hour: \(Int(fh.utilization.rounded()))% (resets \(relativeReset(fh.resetsAt)))")
-        }
         if let wd = u.sevenDay {
             parts.append("Weekly: \(Int(wd.utilization.rounded()))% (resets \(relativeReset(wd.resetsAt)))")
+        } else {
+            parts.append("No weekly reading")
         }
         if usageService.isStale, let fetched = usageService.lastFetched {
             parts.append("Stale — last updated \(relative(fetched))")
@@ -154,9 +146,6 @@ struct UsagePopover: View {
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(RoundedRectangle(cornerRadius: 5).fill(Color.orange.opacity(0.12)))
-                    }
-                    if let fh = u.fiveHour {
-                        UsageRow(label: "5-hour window", window: fh)
                     }
                     if let wd = u.sevenDay {
                         UsageRow(label: "Weekly (all)", window: wd)

@@ -81,7 +81,6 @@ class HUDPanelController {
             .environmentObject(appState.sessionHistoryService)
             .environmentObject(appState.vaultManager)
             .environmentObject(appState.usageService)
-            .environmentObject(appState.skillsService)
             .environmentObject(appState.remoteControlServer)
 
         // Host SwiftUI via an NSHostingController set as contentViewController,
