@@ -195,7 +195,7 @@ permissions() {
     line=
     for _ in {1..15}; do
       if [[ $which == topaz ]]; then
-        pid=$(pgrep -n -f $APP/Contents/MacOS/wezterm-gui || true)
+        pid=$(pgrep -a -n -f $APP/Contents/MacOS/wezterm-gui || true)
         file=$HOME/.local/share/wezterm/wezterm-gui-log-$pid.txt
         [[ -n $pid && -f $file ]] && line=$(grep -o 'permissions: .*' $file | tail -1 || true)
       else
@@ -226,10 +226,10 @@ install_staged() {
   verify $STAGE
   osascript -e 'tell application "Topaz" to quit' 2>/dev/null || true
   for _ in {1..40}; do
-    pgrep -qf $APP/Contents/MacOS/wezterm-gui || break
+    pgrep -aqf $APP/Contents/MacOS/wezterm-gui || break
     sleep 0.5
   done
-  if pgrep -qf $APP/Contents/MacOS/wezterm-gui; then
+  if pgrep -aqf $APP/Contents/MacOS/wezterm-gui; then
     echo "Topaz did not quit; nothing installed." >&2
     exit 1
   fi
@@ -260,7 +260,9 @@ install_helper() {
     launcher) name="Topaz Launcher" inside=$LAUNCHER_IN ;;
   esac
   [[ -d $APP/$inside ]] || { echo "$APP has no $inside; build and install Topaz first." >&2; exit 1; }
-  pgrep -qf $APP/Contents/MacOS/wezterm-gui || { echo "Topaz is not running, so nothing would relaunch $name." >&2; exit 1; }
+  # -a: macOS pgrep leaves out its own ancestors by default, and run from a
+  # Topaz tab, Topaz is one of them.
+  pgrep -aqf $APP/Contents/MacOS/wezterm-gui || { echo "Topaz is not running, so nothing would relaunch $name." >&2; exit 1; }
   local loupe_want=$(designated $APP/$LOUPE_IN) launcher_want=
   [[ -d $APP/$LAUNCHER_IN ]] && launcher_want=$(designated $APP/$LAUNCHER_IN)
   build_helpers
